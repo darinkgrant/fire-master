@@ -92,6 +92,7 @@ Things that will cause bugs if you don't know them.
 - All monetary values: BIGINT cents in PostgreSQL
 - Use `displayBalance` (not `currentBalance`) for account balances
 - Account enrichment fields survive Monarch sync (not overwritten)
+- **Accounts Monarch stops returning are orphaned, never deleted** (Oct 24 2026: a re-link left the old rows counted, +~$1.2M net worth). After each `sync_accounts`, every `source=MONARCH` row whose `external_id` is absent from Monarch's live set (hidden/deactivated count as absent) gets `include_in_net_worth=false` + `custom_data.monarch_orphaned_at` (`_orphan_accounts_stmt`); transactions and enrichment stay, no today-snapshot is written for it. Reappearing clears the flag and `include_in_net_worth` follows Monarch again. Only unflagged rows are touched, so hand re-including an orphan sticks. Guards: MANUAL never matches; a failed fetch raises first; an empty/all-hidden list skips the pass. `GET /api/accounts` exposes `monarch_orphaned_at`.
 - Demo-seed rows (`scripts/seed_demo.py`) are `source=MANUAL`, `external_id=NULL`, marked `custom_data.demo_seed=true` — invisible to sync/reconcile; `--remove` deletes exactly those
 - Uses `monarchmoneycommunity` fork (original `monarchmoney` unmaintained, domain rebrand broke it)
 - Uses `bcrypt` directly (not `passlib` — incompatible with bcrypt 5.x)
