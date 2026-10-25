@@ -21,6 +21,9 @@ class CashflowEventCreate(BaseModel):
     category: str | None = None
     linked_account_id: UUID | None = None
     notes: str | None = None
+    # Stop at the plan's retirement month (stored as custom_data.end_at = "retirement");
+    # end_date stays the fallback when no retirement date is configured.
+    ends_at_retirement: bool = False
 
 
 class CashflowEventUpdate(BaseModel):
@@ -36,6 +39,7 @@ class CashflowEventUpdate(BaseModel):
     category: str | None = None
     linked_account_id: UUID | None = None
     notes: str | None = None
+    ends_at_retirement: bool | None = None
 
 
 class CashflowEventResponse(BaseModel):
@@ -53,11 +57,17 @@ class CashflowEventResponse(BaseModel):
     linked_account_id: UUID | None = None
     notes: str | None = None
     created_at: _dt.datetime | None = None
+    custom_data: dict | None = Field(None, exclude=True)
 
     @computed_field
     @property
     def amount(self) -> float:
         return self.amount_cents / 100
+
+    @computed_field
+    @property
+    def ends_at_retirement(self) -> bool:
+        return isinstance(self.custom_data, dict) and self.custom_data.get("end_at") == "retirement"
 
     model_config = {"from_attributes": True}
 

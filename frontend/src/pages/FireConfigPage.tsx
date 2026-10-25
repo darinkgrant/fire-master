@@ -12,8 +12,19 @@ import {
   useActivateScenario,
 } from "../api/queries";
 import { formatCurrency } from "../utils/formatting";
-import { monthFromNow, planMonth } from "../utils/dates";
+import { inheritanceDateOf, monthFromNow, planMonth, saleMonth } from "../utils/dates";
 import type { FireScenario } from "../types/fire";
+
+/** Whole-years age at the end of a "YYYY-MM" month, or undefined without both inputs. */
+function retirementAge(dob: string, month: string): string | undefined {
+  if (!dob || !month) return undefined;
+  const [by, bm, bd] = dob.split("-").map(Number);
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  let age = y - by;
+  if (m < bm || (m === bm && lastDay < bd)) age -= 1;
+  return String(age);
+}
 
 export default function FireConfigPage() {
   const { data: config, isLoading } = useFireConfig();
@@ -25,6 +36,8 @@ export default function FireConfigPage() {
   const [form, setForm] = useState({
     date_of_birth: "",
     target_retirement_age: "",
+    // Last working month ("YYYY-MM"); wins over the age. Stored as target_retirement_date.
+    target_retirement_month: "",
     life_expectancy: "90",
     fire_variant: "regular",
     safe_withdrawal_rate: "4.0",
@@ -63,6 +76,11 @@ export default function FireConfigPage() {
     spending_phase_floor_age: "80",
     ira_b_draw_threshold_months: "12",
     rental_occupancy_rate: "100",
+    // Inheritance (stored in custom_assumptions.inheritance) — one month the plan moves on
+    inheritance_date: "",
+    inheritance_cash: "",
+    inheritance_home_monthly_cost: "",
+    inheritance_vacated_home_rent: "",
   });
 
   const [incomeForm, setIncomeForm] = useState({
@@ -83,9 +101,12 @@ export default function FireConfigPage() {
       const ca = config.custom_assumptions as Record<string, unknown> | undefined;
       const tax = ca?.tax as Record<string, unknown> | undefined;
       const proj = ca?.projection as Record<string, unknown> | undefined;
+      const inh = ca?.inheritance as Record<string, unknown> | undefined;
+      const inhNum = (k: string) => (inh?.[k] != null ? String(inh[k]) : "");
       setForm({
         date_of_birth: config.date_of_birth || "",
         target_retirement_age: config.target_retirement_age?.toString() || "",
+        target_retirement_month: (config.target_retirement_date || "").slice(0, 7),
         life_expectancy: config.life_expectancy.toString(),
         fire_variant: config.fire_variant,
         safe_withdrawal_rate: config.safe_withdrawal_rate.toString(),
@@ -125,6 +146,10 @@ export default function FireConfigPage() {
         spending_phase_floor_age: (proj?.spending_phase_floor_age as number)?.toString() || "80",
         ira_b_draw_threshold_months: (proj?.ira_b_draw_threshold_months as number)?.toString() || "12",
         rental_occupancy_rate: ca?.rental_occupancy_rate != null ? ((ca.rental_occupancy_rate as number) * 100).toString() : "100",
+        inheritance_date: ((inh?.date as string | undefined) || "").slice(0, 7),
+        inheritance_cash: inhNum("cash"),
+        inheritance_home_monthly_cost: inhNum("home_monthly_cost"),
+        inheritance_vacated_home_rent: inhNum("vacated_home_rent"),
       });
       setLastConfigVersion(version);
     }
@@ -135,6 +160,15 @@ export default function FireConfigPage() {
 
     if (form.date_of_birth) data.date_of_birth = form.date_of_birth;
     if (form.target_retirement_age) data.target_retirement_age = parseInt(form.target_retirement_age);
+    // The month wins in every engine; an empty month (null) lets the age drive.
+    // Stored as the month's LAST day: retirement starts the month after.
+    if (form.target_retirement_month) {
+      const [y, m] = form.target_retirement_month.split("-").map(Number);
+      const last = new Date(y, m, 0).getDate();
+      data.target_retirement_date = `${form.target_retirement_month}-${String(last).padStart(2, "0")}`;
+    } else {
+      data.target_retirement_date = null;
+    }
     if (form.life_expectancy) data.life_expectancy = parseInt(form.life_expectancy);
     data.fire_variant = form.fire_variant;
     if (form.safe_withdrawal_rate) data.safe_withdrawal_rate = parseFloat(form.safe_withdrawal_rate);
@@ -194,6 +228,14 @@ export default function FireConfigPage() {
         ira_b_draw_threshold_months: parseInt(form.ira_b_draw_threshold_months) || 12,
       },
       rental_occupancy_rate: pf(form.rental_occupancy_rate, 100) / 100,
+      // An empty month deletes the date (merge-patch null): the flows stop and a
+      // sale dated "inheritance" is held. Amounts are kept for when a date returns.
+      inheritance: {
+        date: form.inheritance_date || null,
+        cash: form.inheritance_cash ? pf(form.inheritance_cash, 0) : null,
+        home_monthly_cost: form.inheritance_home_monthly_cost ? pf(form.inheritance_home_monthly_cost, 0) : null,
+        vacated_home_rent: form.inheritance_vacated_home_rent ? pf(form.inheritance_vacated_home_rent, 0) : null,
+      },
     };
 
     updateConfig.mutate(data, {
@@ -277,14 +319,20 @@ export default function FireConfigPage() {
         {/* Personal */}
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-5">
           <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-4">Personal</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className={labelCls}>Date of Birth</label>
               <input type="date" value={form.date_of_birth} onChange={(e) => setForm(f => ({ ...f, date_of_birth: e.target.value }))} className={inputCls} />
             </div>
             <div>
+              <label className={labelCls}>Last Working Month</label>
+              <input type="month" value={form.target_retirement_month} onChange={(e) => setForm(f => ({ ...f, target_retirement_month: e.target.value, target_retirement_age: retirementAge(f.date_of_birth, e.target.value) ?? f.target_retirement_age }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Pay, 401(k) contributions and events marked &quot;ends at retirement&quot; stop after this month.</p>
+            </div>
+            <div>
               <label className={labelCls}>Target Retirement Age</label>
-              <input type="number" value={form.target_retirement_age} onChange={(e) => setForm(f => ({ ...f, target_retirement_age: e.target.value }))} placeholder="55" className={inputCls} />
+              <input type="number" value={form.target_retirement_age} onChange={(e) => setForm(f => ({ ...f, target_retirement_age: e.target.value, target_retirement_month: "" }))} placeholder="55" className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Editing the age clears the month: retirement then starts on that birthday.</p>
             </div>
             <div>
               <label className={labelCls}>Life Expectancy</label>
@@ -457,6 +505,31 @@ export default function FireConfigPage() {
             </div>
           </div>
 
+          {/* Inheritance */}
+          <h4 className="text-[11px] uppercase tracking-wider text-[var(--text-secondary)] mb-2 mt-5">Inheritance</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className={labelCls}>Expected Month</label>
+              <input type="month" value={form.inheritance_date} onChange={(e) => setForm(f => ({ ...f, inheritance_date: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Every inheritance flow starts this month; a property sale dated &quot;inheritance&quot; sells then. Clear to plan none.</p>
+            </div>
+            <div>
+              <label className={labelCls}>Cash Received ($, today&apos;s)</label>
+              <input type="number" step="10000" value={form.inheritance_cash} onChange={(e) => setForm(f => ({ ...f, inheritance_cash: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">One-off, lands in that month</p>
+            </div>
+            <div>
+              <label className={labelCls}>Inherited Home Cost ($/mo)</label>
+              <input type="number" step="50" value={form.inheritance_home_monthly_cost} onChange={(e) => setForm(f => ({ ...f, inheritance_home_monthly_cost: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Property tax + insurance + upkeep, from then on</p>
+            </div>
+            <div>
+              <label className={labelCls}>Rent From Vacated Home ($/mo)</label>
+              <input type="number" step="100" value={form.inheritance_vacated_home_rent} onChange={(e) => setForm(f => ({ ...f, inheritance_vacated_home_rent: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Net rent if you rent out the home you leave; 0 if selling</p>
+            </div>
+          </div>
+
           {/* Primary Property */}
           <h4 className="text-[11px] uppercase tracking-wider text-[var(--text-secondary)] mb-2 mt-5">Primary Property</h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -589,8 +662,12 @@ export default function FireConfigPage() {
 }
 
 function ActiveScenarioDetails({ scenario }: { scenario: FireScenario }) {
+  const { data: baseConfig } = useFireConfig();
   const ca = (scenario.overrides as Record<string, unknown>)?.custom_assumptions as Record<string, unknown> | undefined;
   if (!ca) return null;
+  const inheritanceDate = inheritanceDateOf(
+    ca, baseConfig?.custom_assumptions as Record<string, unknown> | undefined,
+  );
 
   const sauvie = ca.sauvie_sale as Record<string, number | boolean> | undefined;
   const str = ca.str_income as Record<string, number | boolean> | undefined;
@@ -628,7 +705,7 @@ function ActiveScenarioDetails({ scenario }: { scenario: FireScenario }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Generic property sales — one card per entry, titled from the user's own key */}
         {propertySales.map((s) => (
-          <PropertySaleCard key={String(s.key ?? "")} sale={s} />
+          <PropertySaleCard key={String(s.key ?? "")} sale={s} inheritanceDate={inheritanceDate} />
         ))}
 
         {sauvie?.enabled && (
@@ -708,13 +785,14 @@ function ActiveScenarioDetails({ scenario }: { scenario: FireScenario }) {
           projection={ca?.projection as Record<string, number> | undefined}
           mortgageRecast={ca?.mortgage_recast as Record<string, number | boolean> | undefined}
           propertySales={propertySales}
+          inheritanceDate={inheritanceDate}
         />
       </div>
     </div>
   );
 }
 
-function PropertySaleCard({ sale }: { sale: Record<string, unknown> }) {
+function PropertySaleCard({ sale, inheritanceDate }: { sale: Record<string, unknown>; inheritanceDate: unknown }) {
   const title = String(sale.key ?? "property")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
@@ -740,7 +818,7 @@ function PropertySaleCard({ sale }: { sale: Record<string, unknown> }) {
     <div className="bg-[var(--bg-card)] rounded p-3 border border-[var(--border)]">
       <h4 className="text-[11px] uppercase tracking-wider text-[var(--text-secondary)] mb-2">{title} Sale</h4>
       <div className="space-y-1 text-xs">
-        <Row label="Sale timing" value={planMonth(sale.sale_date, sale.sale_month).label} />
+        <Row label="Sale timing" value={saleMonth(sale, inheritanceDate).label} />
         <Row label="Est. value" value={money(sale.value)} color="green" />
         <Row label="Cost basis" value={money(sale.cost_basis)} />
         {monthlyCost != null && monthlyCost > 0 && (
@@ -765,12 +843,14 @@ function ExpenseBreakdown({
   projection,
   mortgageRecast,
   propertySales,
+  inheritanceDate,
 }: {
   sauvie?: Record<string, number | boolean>;
   miami?: Record<string, number>;
   projection?: Record<string, number>;
   mortgageRecast?: Record<string, number | boolean>;
   propertySales?: Record<string, unknown>[];
+  inheritanceDate?: unknown;
 }) {
   const { data: config } = useFireConfig();
   // Base budget from config (cents/yr → dollars/mo)
@@ -790,7 +870,7 @@ function ExpenseBreakdown({
 
   // Generic path: derive burn phases from property_sales, in sale order
   if (propertySales && propertySales.length > 0) {
-    const when = (s: Record<string, unknown>) => planMonth(s.sale_date, s.sale_month);
+    const when = (s: Record<string, unknown>) => saleMonth(s, inheritanceDate);
     const sorted = [...propertySales].sort((a, b) => when(a).offset - when(b).offset);
     let inBurn = baseBurn;
     // Carrying costs of held properties that are NOT inside the base budget

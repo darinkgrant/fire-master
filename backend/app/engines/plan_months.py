@@ -86,6 +86,81 @@ def sale_offset(sale: dict, today: date) -> int | None:
     return resolve_month_offset(sale, "sale_date", "sale_month", today, default=None)
 
 
+# ---------------------------------------------------------------------------
+#  Inheritance anchor
+# ---------------------------------------------------------------------------
+# custom_assumptions.inheritance = {
+#     "date": "YYYY-MM",            # expected month — the ONE knob the plan moves on
+#     "cash": 250000,               # one-off cash received that month (real $)
+#     "home_monthly_cost": 1200,    # inherited home's tax + insurance, monthly from then
+#     "vacated_home_rent": 3000,    # optional net rent from the home moved out of
+# }
+# A property_sales entry with sale_date "inheritance" sells in that same month, so
+# "keep and rent" vs "sell when I move" both follow the one date.
+INHERITANCE_ANCHOR = "inheritance"
+INHERITANCE_RENT_LABEL = "Inheritance: rent from vacated home"
+
+
+def inheritance_month(ca: dict | None) -> str | None:
+    """The plan's expected inheritance month ("YYYY-MM"), or None when not planned."""
+    inh = (ca or {}).get("inheritance")
+    if not isinstance(inh, dict):
+        return None
+    raw = str(inh.get("date") or "")[:7]
+    try:
+        year, month = int(raw[0:4]), int(raw[5:7])
+    except ValueError:
+        return None
+    return raw if 1 <= month <= 12 and year > 1900 else None
+
+
+def apply_inheritance_anchor(ca: dict | None) -> dict | None:
+    """Copy of custom_assumptions with every property sale dated "inheritance"
+    resolved to the inheritance month. With no inheritance month the sale has no
+    date, so it is HELD (never sells) rather than silently selling now."""
+    if not isinstance(ca, dict):
+        return ca
+    sales = ca.get("property_sales")
+    if not isinstance(sales, list) or not any(
+        isinstance(s, dict) and s.get("sale_date") == INHERITANCE_ANCHOR for s in sales
+    ):
+        return ca
+    month = inheritance_month(ca)
+    out = copy.deepcopy(ca)
+    for sale in out["property_sales"]:
+        if isinstance(sale, dict) and sale.get("sale_date") == INHERITANCE_ANCHOR:
+            if month:
+                sale["sale_date"] = month
+            else:
+                sale.pop("sale_date")
+    return out
+
+
+def inheritance_flows(ca: dict | None) -> list[dict]:
+    """The inheritance block as cashflow-event specs (all dated the inheritance
+    month): cash in once, the inherited home's carrying cost and the vacated
+    home's rent monthly from then on. Empty when no month is planned."""
+    month = inheritance_month(ca)
+    if not month:
+        return []
+    inh = ca["inheritance"]
+    start = date(int(month[:4]), int(month[5:7]), 1)
+    flows = []
+    for key, name, etype, recurring in (
+        ("cash", "Inheritance: cash", "income", False),
+        ("home_monthly_cost", "Inheritance: home carrying cost", "expense", True),
+        ("vacated_home_rent", INHERITANCE_RENT_LABEL, "income", True),
+    ):
+        try:
+            amount = float(inh.get(key) or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        if amount > 0:
+            flows.append({"name": name, "event_type": etype, "amount": amount, "date": start,
+                          "recurrence": "monthly" if recurring else None})
+    return flows
+
+
 def _pin(container: dict, rel: str, pinned: str, today: date, as_patch: bool) -> None:
     if rel not in container:
         return
