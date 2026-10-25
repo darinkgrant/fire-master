@@ -33,7 +33,13 @@ from app.models.income_source import IncomeSource
 from app.models.net_worth_snapshot import NetWorthSnapshot
 from app.engines.event_calendar import RECURRENCE_STEP_MONTHS as _RECURRENCE_STEP_MONTHS
 from app.engines.event_calendar import event_occurrence_dates
-from app.engines.plan_months import is_held, resolve_month_offset, sale_offset
+from app.engines.plan_months import (
+    apply_inheritance_anchor,
+    inheritance_flows,
+    is_held,
+    resolve_month_offset,
+    sale_offset,
+)
 from app.engines.net_worth import NetWorthEngine
 from app.engines.tax_engine import _get_rmd_divisor
 from app.engines.spending import SpendingEngine
@@ -224,6 +230,59 @@ def build_cashflow_schedule(
     return by_month, labels_by_month
 
 
+def inheritance_events(ca: dict | None) -> list[CashflowEvent]:
+    """The config's inheritance block as transient (never-persisted) CashflowEvent
+    rows, so every engine consuming build_cashflow_schedule sees them exactly like
+    hand-made events — and they all move when the inheritance month changes."""
+    return [
+        CashflowEvent(
+            name=f["name"], event_type=f["event_type"],
+            amount_cents=int(round(f["amount"] * 100)), date=f["date"],
+            is_recurring=f["recurrence"] is not None, recurrence=f["recurrence"],
+            end_date=None, probability=1.0, status="planned",
+            custom_data={"source": "inheritance"},
+        )
+        for f in inheritance_flows(ca)
+    ]
+
+
+def retirement_contributions_monthly(ca: dict | None) -> float:
+    """Total workplace-plan contributions per month (real $), tax-deferred + Roth,
+    from custom_assumptions.retirement_contributions. For single-pool engines,
+    which add them to the one portfolio until retirement."""
+    c = (ca or {}).get("retirement_contributions") or {}
+    return (float(c.get("tax_deferred_annual") or 0) + float(c.get("roth_annual") or 0)) / 12
+
+
+END_AT_RETIREMENT = "retirement"
+
+
+def ends_at_retirement(cf) -> bool:
+    """An event flagged to stop when work stops (custom_data.end_at == "retirement")."""
+    return isinstance(getattr(cf, "custom_data", None), dict) and cf.custom_data.get("end_at") == END_AT_RETIREMENT
+
+
+def apply_retirement_end(events: list, retirement_date: date | None) -> list:
+    """Events flagged "ends at retirement" get the plan's retirement date as their
+    end date (inclusive month — retirement_date is the last working day), so take-home
+    pay, work-funded costs and premiums move with the one retirement month. Copies are
+    transient: the stored row keeps its own end_date as the fallback when no
+    retirement date is set."""
+    if retirement_date is None:
+        return events
+    out = []
+    for cf in events:
+        if ends_at_retirement(cf):
+            cf = CashflowEvent(
+                name=cf.name, event_type=cf.event_type, amount_cents=cf.amount_cents,
+                date=cf.date, is_recurring=cf.is_recurring, recurrence=cf.recurrence,
+                end_date=retirement_date, probability=cf.probability, status=cf.status,
+                category=cf.category, custom_data=cf.custom_data,
+            )
+        out.append(cf)
+    return out
+
+
 def cashflow_by_year(by_month: dict[int, list[tuple[str, float]]], total_years: int) -> list[float]:
     """Collapse a month-offset schedule into net signed dollars per year."""
     out = [0.0] * total_years
@@ -279,7 +338,13 @@ class FireProjectionsEngine:
             scenario = result.scalar_one_or_none()
 
         if scenario and scenario.overrides:
-            return self._apply_overrides(config, scenario.overrides)
+            config = self._apply_overrides(config, scenario.overrides)
+        # A property sale dated "inheritance" sells in the plan's inheritance month.
+        # Resolved on a detached copy — the stored config keeps the anchor.
+        anchored = apply_inheritance_anchor(config.custom_assumptions)
+        if anchored is not config.custom_assumptions:
+            config = self._apply_overrides(config, {})
+            config.custom_assumptions = anchored
         return config
 
     @staticmethod
@@ -489,14 +554,20 @@ class FireProjectionsEngine:
         )
         return list(result.scalars().all())
 
-    async def _get_cashflow_events(self) -> list[CashflowEvent]:
-        """Planned + confirmed cashflow events — the declared plan's dated flows."""
+    async def _get_cashflow_events(self, config: FireConfig | None = None) -> list[CashflowEvent]:
+        """Planned + confirmed cashflow events — the declared plan's dated flows —
+        plus, given the effective config, the flows its inheritance block declares
+        (so every engine moves together when the inheritance month changes)."""
         result = await self.db.execute(
             select(CashflowEvent).where(
                 CashflowEvent.status.in_(["planned", "confirmed"]),
             )
         )
-        return list(result.scalars().all())
+        events = list(result.scalars().all())
+        if config is not None:
+            events = apply_retirement_end(events, self._get_retirement_date(config))
+            events += inheritance_events(config.custom_assumptions)
+        return events
 
     def _single_pool_event_skip(self, config: FireConfig) -> Callable[[CashflowEvent], bool]:
         """Skip predicate for engines that model ONE undifferentiated net worth
@@ -620,7 +691,7 @@ class FireProjectionsEngine:
         annual_spending_cents = await self._get_annual_spending(config)
         annual_income_cents = await self._get_annual_income()
         income_sources = await self._get_income_sources()
-        cashflow_events = await self._get_cashflow_events()
+        cashflow_events = await self._get_cashflow_events(config)
 
         # Scenario adjustments
         return_adj = 0.0
@@ -692,6 +763,7 @@ class FireProjectionsEngine:
 
         net_worth = current_nw_cents
         monthly_spending_base = (annual_spending_cents + spending_adj_cents) / 12
+        contrib_cents_m = retirement_contributions_monthly(config.custom_assumptions) * 100
 
         # Apply one-time events
         if overrides and overrides.one_time_windfall:
@@ -704,6 +776,19 @@ class FireProjectionsEngine:
         nw_at_retirement = net_worth
         retirement_found = retirement_date
         current = today
+        # Each point's income/spending/savings are the flows of the months it
+        # covers (up to the next point), annualized — NOT one month × 12, which
+        # turned an annual premium or a quarterly bill into a 12x yearly figure.
+        period = {"income": 0.0, "spending": 0.0, "months": 0}
+
+        def _close_period() -> None:
+            if points and period["months"]:
+                scale = 12 / period["months"]
+                p = points[-1]
+                p.income = round(_cents_to_dollars(period["income"] * scale), 2)
+                p.spending = round(_cents_to_dollars(period["spending"] * scale), 2)
+                p.savings = round(_cents_to_dollars((period["income"] - period["spending"]) * scale), 2)
+            period.update(income=0.0, spending=0.0, months=0)
 
         month_idx = 0
         while current <= end_date:
@@ -779,6 +864,9 @@ class FireProjectionsEngine:
             investment_return = net_worth * monthly_return
 
             net_worth = net_worth + monthly_savings + investment_return
+            if not is_retired:
+                # Workplace-plan contributions (net pay events exclude them)
+                net_worth += contrib_cents_m
 
             if net_worth < lowest_nw:
                 lowest_nw = net_worth
@@ -789,6 +877,7 @@ class FireProjectionsEngine:
 
             # Record point (yearly granularity for chart efficiency)
             if month_idx % 12 == 0 or current == retirement_date:
+                _close_period()
                 points.append(ProjectionPoint(
                     date=current.isoformat(),
                     age=round(age, 1),
@@ -798,9 +887,13 @@ class FireProjectionsEngine:
                     savings=round(_cents_to_dollars(monthly_savings * 12), 2),
                     phase=phase,
                 ))
+            period["income"] += monthly_income
+            period["spending"] += monthly_spending
+            period["months"] += 1
 
             current += relativedelta(months=1)
             month_idx += 1
+        _close_period()
 
         money_lasts = net_worth > 0
 
@@ -888,7 +981,7 @@ class FireProjectionsEngine:
         # now (a monthly event is by construction a stable stream; fire-master#17
         # — an event-based plan used to score 0). Nothing declared → neutral 50.
         sources = await self._get_income_sources()
-        cashflow_events = await self._get_cashflow_events()
+        cashflow_events = await self._get_cashflow_events(config)
         stable_types = {"salary", "rental", "pension", "social_security"}
         stable_income = sum(s.annual_amount for s in sources if s.income_type.value in stable_types)
         total_income = sum(s.annual_amount for s in sources)
@@ -1248,6 +1341,20 @@ class FireProjectionsEngine:
         roth = float(roth_cfg.get("starting_balance", 0) or 0)
         _roth_rate = roth_cfg.get("return_rate")
         roth_rate_m = (ira_growth_rate if _roth_rate is None else float(_roth_rate)) / 12  # real annual → monthly
+
+        # Workplace-plan contributions until retirement (opt-in):
+        # custom_assumptions.retirement_contributions = {tax_deferred_annual, roth_annual}
+        # (real $/yr; pre-tax deferral + employer match → IRA-B, Roth/after-tax → Roth).
+        # Paid through the retirement month, so moving the retirement date moves how
+        # much is saved. Take-home pay events are already NET of these deferrals.
+        contrib_cfg = (config.custom_assumptions or {}).get("retirement_contributions") or {}
+        contrib_ira_m = float(contrib_cfg.get("tax_deferred_annual") or 0) / 12
+        contrib_roth_m = float(contrib_cfg.get("roth_annual") or 0) / 12
+        retirement_date = self._get_retirement_date(config)
+        contrib_months = (
+            max(0, (retirement_date.year - today.year) * 12 + (retirement_date.month - today.month) + 1)
+            if retirement_date else 0
+        )
         sales_by_month: dict[int, list[dict]] = {}
         generic_sold: dict[str, bool] = {}
         for _s in property_sales:
@@ -1308,7 +1415,7 @@ class FireProjectionsEngine:
         # so proceeds aren't double-counted AND no phantom event label/marker
         # renders for money that never lands. Opt-in per sale via
         # "suppress_cashflow_match"; only active when generic sales are on.
-        cashflow_events = await self._get_cashflow_events()
+        cashflow_events = await self._get_cashflow_events(config)
 
         def _sale_suppresses(cf: CashflowEvent) -> bool:
             return use_generic_sales and sale_event_suppressed(cf, property_sales)
@@ -1572,6 +1679,11 @@ class FireProjectionsEngine:
             if roth > 0:
                 roth *= (1 + roth_rate_m)
 
+            # --- Workplace-plan contributions, through the retirement month ---
+            if m < contrib_months:
+                ira_b += contrib_ira_m
+                roth += contrib_roth_m
+
             # --- Drawdown waterfall ---
             # Order: taxable brokerage → IRA-B (after 59½) → forced RMDs → Roth.
             # Each step sees only the gap the previous ones left, and a pool is
@@ -1794,7 +1906,7 @@ class FireProjectionsEngine:
         config = await self.get_effective_config()
         breakdown = await self._compute_net_worth_breakdown()
         sources = await self._get_income_sources()
-        cashflow_events = await self._get_cashflow_events()
+        cashflow_events = await self._get_cashflow_events(config)
         annual_spending_cents = await self._get_annual_spending(config)
         today = date.today()
 

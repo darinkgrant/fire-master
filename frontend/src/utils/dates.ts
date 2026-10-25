@@ -63,6 +63,34 @@ export function planMonth(pinned: unknown, offset: unknown): { offset: number; l
   return { offset: n, label: `Month ${n} from now` };
 }
 
+/**
+ * A property sale's month. `sale_date: "inheritance"` follows the plan's
+ * inheritance month (custom_assumptions.inheritance.date, Settings → Inheritance);
+ * with no inheritance month the engine holds the property, so it shows as held.
+ */
+export function saleMonth(
+  sale: Record<string, unknown>,
+  inheritanceDate: unknown,
+): { offset: number; label: string } {
+  if (sale.sale_date === "inheritance") {
+    if (typeof inheritanceDate === "string" && inheritanceDate) {
+      const m = planMonth(inheritanceDate.slice(0, 7), null);
+      return { offset: m.offset, label: `At inheritance: ${m.label}` };
+    }
+    return { offset: Number.POSITIVE_INFINITY, label: "At inheritance (no month set: held)" };
+  }
+  return planMonth(sale.sale_date, sale.sale_month);
+}
+
+/** The plan's inheritance month: a scenario override wins over the base config. */
+export function inheritanceDateOf(...cas: (Record<string, unknown> | null | undefined)[]): unknown {
+  for (const ca of cas) {
+    const inh = ca?.inheritance as Record<string, unknown> | undefined;
+    if (inh && "date" in inh) return inh.date;
+  }
+  return undefined;
+}
+
 /** "YYYY-MM" for the calendar month n months after this one. */
 export function monthFromNow(n: number): string {
   const d = new Date();

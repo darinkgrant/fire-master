@@ -40,6 +40,10 @@ def _cents_to_dollars(cents: int) -> float:
 class CashflowEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
+        # The active plan's inheritance flows and retirement date, loaded with its
+        # property sales (_get_plan_sales reads the same effective config).
+        self._plan_inheritance_events: list[CashflowEvent] = []
+        self._plan_retirement_date: date | None = None
 
     async def get_current_cash(self) -> float:
         """Liquid cash for the runway projection.
@@ -176,11 +180,14 @@ class CashflowEngine:
         what-if with no date to put on a cash calendar. Returns
         (sales, real RE appreciation rate, active scenario name or None).
         """
-        from app.engines.fire_projections import FireProjectionsEngine
+        from app.engines.fire_projections import FireProjectionsEngine, inheritance_events
         from app.models.fire_scenario import FireScenario
 
-        config = await FireProjectionsEngine(self.db).get_effective_config()
+        fire_engine = FireProjectionsEngine(self.db)
+        config = await fire_engine.get_effective_config()
         ca = config.custom_assumptions or {}
+        self._plan_inheritance_events = inheritance_events(ca)
+        self._plan_retirement_date = fire_engine._get_retirement_date(config)
         sales = [
             s for s in (ca.get("property_sales") or [])
             if isinstance(s, dict) and s.get("sale_date")
@@ -232,6 +239,7 @@ class CashflowEngine:
         names in suppress_cashflow_match is dropped — the plan owns that sale.
         """
         from app.engines.fire_projections import (
+            apply_retirement_end,
             build_cashflow_schedule,
             property_sale_net_proceeds,
             sale_event_suppressed,
@@ -278,7 +286,8 @@ class CashflowEngine:
 
         plan_sales, re_appreciation, scenario_name = await self._get_plan_sales()
         by_month, labels_by_month = build_cashflow_schedule(
-            events, today, months,
+            apply_retirement_end(events, self._plan_retirement_date) + self._plan_inheritance_events,
+            today, months,
             skip=(lambda cf: sale_event_suppressed(cf, plan_sales)) if plan_sales else None,
         )
         sales: list[ScenarioSale] = []

@@ -215,7 +215,9 @@ class TestLifetimeEvents:
         r = await self._lifetime(cfg, events=[ev], income_cents=30_000_000)
         first = r.points[0]
         assert first.phase == "accumulation"
-        assert first.income == 0  # Apr 2026: event starts in May; NO $300K trailing income
+        # The point covers Apr 2026-Mar 2027: 11 months of the $2K event (it starts in
+        # May), and NO $300K trailing-income fallback layered on top.
+        assert first.income == pytest.approx(22_000, abs=1)
 
     async def test_expense_event_raises_spending(self, frozen_today):
         cfg = _make_fire_config(social_security_monthly=0, healthcare_monthly_cost=None)
@@ -223,6 +225,24 @@ class TestLifetimeEvents:
                     recurrence="monthly", end=date(2027, 3, 31))
         r = await self._lifetime(cfg, events=[ev])
         assert r.points[0].spending == pytest.approx(120_000 + 24_000 * 12, abs=1)
+
+    async def test_annual_expense_counted_once_per_point_year(self, frozen_today):
+        """A point reports the flows of the year it covers, not its month x 12: an
+        annual premium landing in the point's month used to read as 12x."""
+        cfg = _make_fire_config(social_security_monthly=0, healthcare_monthly_cost=None)
+        premium = _event("Premium", "expense", 1_200_000, FROZEN_TODAY, recurring=True,
+                         recurrence="annual", end=date(2030, 12, 31))
+        base = await self._lifetime(cfg)
+        r = await self._lifetime(cfg, events=[premium])
+        assert r.points[0].spending - base.points[0].spending == pytest.approx(12_000, abs=1)
+
+    async def test_quarterly_expense_sums_four_payments_per_point_year(self, frozen_today):
+        cfg = _make_fire_config(social_security_monthly=0, healthcare_monthly_cost=None)
+        interest = _event("Interest", "expense", 300_000, FROZEN_TODAY, recurring=True,
+                          recurrence="quarterly", end=date(2030, 12, 31))
+        base = await self._lifetime(cfg)
+        r = await self._lifetime(cfg, events=[interest])
+        assert r.points[0].spending - base.points[0].spending == pytest.approx(12_000, abs=1)
 
     async def test_conversion_event_skipped_via_matchers(self, frozen_today):
         cfg = _make_fire_config(social_security_monthly=0, healthcare_monthly_cost=None)

@@ -71,6 +71,7 @@ from app.engines.fire_projections import (
     _spending_multiplier,
     build_cashflow_schedule,
     cashflow_by_year,
+    retirement_contributions_monthly,
 )
 from app.schemas.tax import MonteCarloResponse, PercentileCurvePoint
 
@@ -197,7 +198,7 @@ class MonteCarloEngine:
         annual_spending_cents = await fire_engine._get_annual_spending(config)
         annual_spending = annual_spending_cents / 100  # flat REAL
         income_sources = await fire_engine._get_income_sources()
-        cashflow_events = await fire_engine._get_cashflow_events()
+        cashflow_events = await fire_engine._get_cashflow_events(config)
 
         retirement_date = fire_engine._get_retirement_date(config)
         today = date.today()
@@ -254,6 +255,9 @@ class MonteCarloEngine:
         # monthly evaluations, matching project_lifetime's cadence so mid-year
         # retirement and source start/end dates land in the right year.
         inflation_pct = config.expected_inflation_rate
+        # Workplace-plan contributions add to the portfolio until retirement
+        # (net take-home events exclude them) — same rule as project_lifetime.
+        contrib_cents_m = retirement_contributions_monthly(config.custom_assumptions) * 100
         income_by_year: list[float] = []
         for yr in range(total_years):
             year_cents = 0
@@ -264,6 +268,8 @@ class MonteCarloEngine:
                     income_sources, current, retirement_date,
                     month_idx / 12.0, inflation_pct,
                 )
+                if retirement_date and current <= retirement_date:
+                    year_cents += contrib_cents_m
             income_by_year.append(year_cents / 100)
 
         # Cashflow events: same schedule the projection engines use, net

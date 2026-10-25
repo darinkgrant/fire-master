@@ -14,6 +14,8 @@ export interface CashflowEvent {
   linked_account_id: string | null;
   notes: string | null;
   created_at: string | null;
+  /** Stops in the plan's retirement month (Settings → Last Working Month). */
+  ends_at_retirement: boolean;
 }
 
 export interface CashflowEventCreate {
@@ -28,6 +30,7 @@ export interface CashflowEventCreate {
   status?: string;
   category?: string | null;
   notes?: string | null;
+  ends_at_retirement?: boolean;
 }
 
 export interface MonthlyProjectionPoint {

@@ -91,6 +91,7 @@ function EventModal({
           status: initial.status,
           category: initial.category,
           notes: initial.notes,
+          ends_at_retirement: initial.ends_at_retirement,
         }
       : {
           name: "",
@@ -104,6 +105,7 @@ function EventModal({
           status: "planned",
           category: null,
           notes: null,
+          ends_at_retirement: false,
         },
   );
 
@@ -247,10 +249,19 @@ function EventModal({
               type="date"
               className={inputCls}
               value={form.end_date || ""}
+              disabled={!!form.ends_at_retirement}
               onChange={(e) =>
                 setForm({ ...form, end_date: e.target.value || null })
               }
             />
+            <label className="flex items-center gap-2 mt-2 text-xs text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={!!form.ends_at_retirement}
+                onChange={(e) => setForm({ ...form, ends_at_retirement: e.target.checked })}
+              />
+              Ends at retirement (follows Settings &rarr; Last Working Month)
+            </label>
           </div>
         )}
 
@@ -360,7 +371,7 @@ function EventRow({
           <div className="text-[10px] text-[var(--text-secondary)]">
             {evt.date}
             {evt.is_recurring &&
-              ` / ${evt.recurrence} → ${evt.end_date ?? "ongoing"}`}
+              ` / ${evt.recurrence} → ${evt.ends_at_retirement ? "retirement" : (evt.end_date ?? "ongoing")}`}
             {evt.probability < 1 &&
               ` / ${(evt.probability * 100).toFixed(0)}% likely`}
           </div>
