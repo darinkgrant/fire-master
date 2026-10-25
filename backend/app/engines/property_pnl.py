@@ -216,6 +216,27 @@ def resolve_with_tag(
     return None, None, None
 
 
+def months_in_window(
+    start: date | None, end: date | None, first_activity_month: str | None, today: date
+) -> int:
+    """Calendar months a P&L window spans, inclusive — the divisor for per-month figures.
+
+    Counts every month in the window, NOT only months with transactions: a quarterly
+    mortgage or semi-annual property tax posts in 1 of every 3 (or 6) months, and dividing
+    by active months reported each lump payment as a monthly cost. The window runs from
+    `start` (or the property's first activity month when the range is open) to `end`
+    (or this month).
+    """
+    if start is not None:
+        y0, m0 = start.year, start.month
+    elif first_activity_month:
+        y0, m0 = int(first_activity_month[:4]), int(first_activity_month[5:7])
+    else:
+        return 1
+    stop = end or today
+    return max(1, (stop.year - y0) * 12 + (stop.month - m0) + 1)
+
+
 class PropertyPnLEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -419,8 +440,12 @@ class PropertyPnLEngine:
             )
             rental_actual = sum(cat_matrix.get(RENTAL_INCOME, {}).values())
             potential = p.potential_monthly_rental_cents or 0
-            # Annualize potential over the months covered for a like-for-like comparison.
-            months_covered = len({m for by_month in cat_matrix.values() for m in by_month}) or 1
+            # Calendar months in the window (not months with activity), so quarterly or
+            # semi-annual payments average out. Potential rent uses the same basis.
+            active_months = {m for by_month in cat_matrix.values() for m in by_month}
+            months_covered = months_in_window(
+                start, end, min(active_months) if active_months else None, date.today()
+            )
             rental_potential = potential * months_covered
 
             equity = p.equity_cents
@@ -440,7 +465,7 @@ class PropertyPnLEngine:
                         "rental_potential_cents": rental_potential,
                         "net_cost_cents": total_cost - rental_actual,
                         "monthly_cost_cents": round(total_cost / months_covered),
-                        # Net annualized over the months of activity (same basis as monthly_cost),
+                        # Net annualized over the window's months (same basis as monthly_cost),
                         # so the card shows net PER YEAR, not the cumulative all-time net.
                         "net_per_year_cents": round((total_cost - rental_actual) * 12 / months_covered),
                     },
