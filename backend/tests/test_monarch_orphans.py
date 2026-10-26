@@ -13,10 +13,11 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.sql.dml import Update
+from sqlalchemy.sql.dml import Insert, Update
 
 from app.ingestion.monarch_sync import (
     ORPHAN_FLAG,
+    SYSTEM_FIRE_ROLE,
     MonarchSyncService,
     _account_upsert_stmt,
     _orphan_accounts_stmt,
@@ -90,6 +91,13 @@ class TestOrphanStatement:
         assert params["include_in_net_worth"] is False
         assert "'{}'::jsonb" in sql  # literal, not a bound JSON string
 
+    def test_system_accounts_are_never_orphaned(self):
+        stmt = _orphan_accounts_stmt({"a"}, datetime.now(timezone.utc))
+        sql, params = _sql(stmt), _compiled(stmt).params
+        # NULL-safe: a plain != would also drop every account with no fire_role
+        assert "accounts.fire_role IS NULL OR accounts.fire_role != %(fire_role_1)s" in sql
+        assert params["fire_role_1"] == SYSTEM_FIRE_ROLE == "system"
+
     def test_already_flagged_rows_are_left_alone(self):
         # a user who re-includes an orphan by hand must not be re-excluded every sync
         sql = _sql(_orphan_accounts_stmt({"a"}, datetime.now(timezone.utc)))
@@ -110,10 +118,12 @@ class TestSyncAccountsGuards:
         assert _live_ids(stmt) == {"a", "b"}
 
     @pytest.mark.asyncio
-    async def test_hidden_account_is_not_live(self):
+    async def test_hidden_account_stays_live_deactivated_does_not(self):
         db = await _sync([_raw("a"), _raw("h", isHidden=True), _raw("d", deactivatedAt="2026-10-01")])
         (stmt,) = db.updates()
-        assert _live_ids(stmt) == {"a"}
+        assert _live_ids(stmt) == {"a", "h"}  # hidden still exists in Monarch: never orphaned
+        upserts = [s for s in db.statements if isinstance(s, Insert)]
+        assert len(upserts) == 1  # hidden and deactivated are still not upserted
 
     @pytest.mark.asyncio
     async def test_empty_fetch_never_orphans_everything(self):
@@ -122,7 +132,7 @@ class TestSyncAccountsGuards:
 
     @pytest.mark.asyncio
     async def test_fetch_with_nothing_live_never_orphans_everything(self):
-        db = await _sync([_raw("h", isHidden=True)])
+        db = await _sync([_raw("d", deactivatedAt="2026-10-01")])
         assert db.updates() == []
 
     @pytest.mark.asyncio

@@ -158,11 +158,34 @@ class TestOrphanedAccountsAgainstPostgres:
         assert live.include_in_net_worth is True
         assert "monarch_orphaned_at" not in (live.custom_data or {})
 
-    async def test_hidden_account_is_orphaned(self, db):
+    async def test_hidden_account_stays_live(self, db):
         keep, hidden = uuid.uuid4().hex, uuid.uuid4().hex
         await _sync_accounts(db, [_raw(keep), _raw(hidden)])
         await _sync_accounts(db, [_raw(keep), {**_raw(hidden), "isHidden": True}])
-        assert (await _fetch(db, hidden)).include_in_net_worth is False
+        acct = await _fetch(db, hidden)
+        assert acct.include_in_net_worth is True
+        assert "monarch_orphaned_at" not in (acct.custom_data or {})
+
+    async def test_deactivated_account_is_orphaned(self, db):
+        keep, closed = uuid.uuid4().hex, uuid.uuid4().hex
+        await _sync_accounts(db, [_raw(keep), _raw(closed)])
+        await _sync_accounts(db, [_raw(keep), {**_raw(closed), "deactivatedAt": "2026-10-01T00:00:00Z"}])
+        acct = await _fetch(db, closed)
+        assert acct.include_in_net_worth is False
+        assert acct.custom_data["monarch_orphaned_at"]
+
+    async def test_system_account_never_orphaned(self, db):
+        keep, system = uuid.uuid4().hex, uuid.uuid4().hex
+        await _sync_accounts(db, [_raw(keep), _raw(system)])
+        acct = await _fetch(db, system)
+        acct.fire_role = "system"
+        await db.flush()
+
+        await _sync_accounts(db, [_raw(keep)])  # Monarch stops returning it
+
+        acct = await _fetch(db, system)
+        assert acct.include_in_net_worth is True
+        assert "monarch_orphaned_at" not in (acct.custom_data or {})
 
     async def test_reappearance_restores_and_follows_monarch(self, db):
         keep, back = uuid.uuid4().hex, uuid.uuid4().hex
