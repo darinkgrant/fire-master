@@ -472,3 +472,27 @@ class FireScenarioHistoryEntry(BaseModel):
     data: dict
 
     model_config = {"from_attributes": True}
+
+
+class DependentPlanRow(BaseModel):
+    """If the owner dies at this age: what the dependent's trust needs vs gets."""
+    owner_age: float
+    date: str
+    dependent_age: float
+    years_to_fund: float
+    need: float  # trust money needed then (PV of remaining lifetime need, real $)
+    available: float  # what reaches the trust then (real $)
+    surplus: float  # available - need
+    components: dict[str, float]  # investments / property_equity / inherited_home / death_benefit / existing_trust
+
+
+class DependentPlanResponse(BaseModel):
+    configured: bool
+    name: str | None = None
+    life_expectancy: int | None = None
+    annual_need: float | None = None
+    trust_return_rate: float | None = None
+    spending: float | None = None  # owner's annual spending these rows were run at
+    rows: list[DependentPlanRow] = []
+    fully_funded: bool | None = None  # every row has surplus >= 0 and the owner's plan survives
+    max_spending_fully_funded: float | None = None  # highest owner spending meeting both

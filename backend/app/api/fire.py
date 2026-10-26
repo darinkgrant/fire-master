@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.merge import json_merge_patch
+from app.engines.dependent_plan import (
+    dependent_age,
+    dependent_cfg,
+    trust_need,
+    trust_resources,
+)
 from app.engines.fire_projections import FireProjectionsEngine
 from app.engines.net_worth import NetWorthEngine
 from app.engines.plan_months import is_held, pin_plan_months
@@ -19,6 +25,8 @@ from app.models.fire_scenario_history import FireScenarioHistory
 from app.models.goal import Goal
 from app.models.income_source import IncomeSource
 from app.schemas.fire import (
+    DependentPlanResponse,
+    DependentPlanRow,
     FireConfigHistoryEntry,
     FireConfigResponse,
     FireConfigUpdate,
@@ -337,6 +345,91 @@ async def get_wealth_projection(
     return await engine.project_wealth_pools(
         end_age, bridge_months=bridge_months,
         spending_override_cents=spending_override,
+    )
+
+
+def _plan_survives(proj, end_age: float) -> bool:
+    """The owner's own plan: cash never negative, total never negative, reaches end_age."""
+    pts = proj.points
+    return bool(pts) and pts[-1].age >= end_age - 1 and all(
+        p.cash >= -1 and p.total >= 0 for p in pts
+    )
+
+
+async def _dependent_rows(engine, config, dep, spending_cents):
+    """Owner-death checkpoints (every 5th birthday + the planned end) vs trust need."""
+    end_age = config.life_expectancy
+    proj = await engine.project_wealth_pools(end_age=end_age, spending_override_cents=spending_cents)
+    ca = config.custom_assumptions or {}
+    today = date.today()
+    retirement = engine._get_retirement_date(config)
+    rows = []
+    pts = proj.points
+    for i, p in enumerate(pts):
+        if int(p.age) % 5 != 0 and i != len(pts) - 1:
+            continue
+        death = date.fromisoformat(p.date)
+        need, years = trust_need(dep, death)
+        comps = trust_resources(p, dep, ca, death, today, retirement)
+        avail = sum(comps.values())
+        rows.append(DependentPlanRow(
+            owner_age=round(p.age, 1), date=p.date[:7],
+            dependent_age=round(dependent_age(dep, death), 1),
+            years_to_fund=round(years, 1), need=round(need), available=round(avail),
+            surplus=round(avail - need), components={k: round(v) for k, v in comps.items()},
+        ))
+    return rows, _plan_survives(proj, end_age)
+
+
+@router.get("/dependent-plan", response_model=DependentPlanResponse)
+async def get_dependent_plan(
+    spending_override: int | None = None,
+    _user: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Will the dependent's trust be fully funded if the owner dies at each age?
+
+    Runs the active plan's wealth projection (to the owner's life expectancy) at
+    the configured — or overridden — spending, then compares what would reach the
+    trust at each checkpoint with the present value of the dependent's remaining
+    lifetime need. Also searches for the highest owner spending that keeps both
+    the owner's plan and every checkpoint funded."""
+    engine = FireProjectionsEngine(db)
+    config = await engine.get_effective_config()
+    dep = dependent_cfg(config.custom_assumptions)
+    if dep is None:
+        return DependentPlanResponse(configured=False)
+
+    spending_cents = (
+        spending_override if spending_override is not None
+        else await engine._get_annual_spending(config)
+    )
+    rows, survives = await _dependent_rows(engine, config, dep, spending_cents)
+
+    async def funded(cents: int) -> bool:
+        rs, ok = await _dependent_rows(engine, config, dep, cents)
+        return ok and all(r.surplus >= 0 for r in rs)
+
+    lo, hi, best = 0, 60_000_000, None  # $0 .. $600k/yr, cents
+    if await funded(lo):
+        while hi - lo > 100_000:  # $1k precision
+            mid = (lo + hi) // 2
+            if await funded(mid):
+                lo, best = mid, mid
+            else:
+                hi = mid
+        best = lo
+
+    return DependentPlanResponse(
+        configured=True,
+        name=dep.get("name"),
+        life_expectancy=int(dep.get("life_expectancy") or 85),
+        annual_need=float(dep.get("annual_need") or 0),
+        trust_return_rate=float(dep.get("trust_return_rate") if dep.get("trust_return_rate") is not None else 0.04),
+        spending=round(spending_cents / 100),
+        rows=rows,
+        fully_funded=survives and all(r.surplus >= 0 for r in rows),
+        max_spending_fully_funded=None if best is None else round(best / 100),
     )
 
 

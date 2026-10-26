@@ -289,3 +289,27 @@ export interface FireScenario {
   created_at: string;
   updated_at: string;
 }
+
+/** GET /api/fire/dependent-plan — a dependent's trust funding if the owner dies at each age. */
+export interface DependentPlanRow {
+  owner_age: number;
+  date: string; // "YYYY-MM"
+  dependent_age: number;
+  years_to_fund: number;
+  need: number;
+  available: number;
+  surplus: number;
+  components: Record<string, number>; // investments, property_equity, inherited_home, death_benefit, existing_trust
+}
+
+export interface DependentPlan {
+  configured: boolean;
+  name: string | null;
+  life_expectancy: number | null;
+  annual_need: number | null;
+  trust_return_rate: number | null;
+  spending: number | null;
+  rows: DependentPlanRow[];
+  fully_funded: boolean | null;
+  max_spending_fully_funded: number | null;
+}

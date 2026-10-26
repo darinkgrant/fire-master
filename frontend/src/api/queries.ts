@@ -46,6 +46,7 @@ import type {
   ScenarioComparison,
   FireScenario,
   SpendingSensitivity,
+  DependentPlan,
 } from "../types/fire";
 import type {
   BracketAnalysis,
@@ -318,6 +319,16 @@ export function useBridgeProjection(spendingOverride?: number) {
     queryKey: ["fire", "bridge-projection", spendingOverride ?? "default"],
     queryFn: () =>
       fetchJSON<WealthPoolProjection>(`${BASE}/fire/wealth-projection?${params.toString()}`),
+  });
+}
+
+export function useDependentPlan(spendingOverride?: number) {
+  const params = new URLSearchParams();
+  if (spendingOverride != null) params.set("spending_override", String(spendingOverride));
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ["fire", "dependent-plan", spendingOverride ?? "default"],
+    queryFn: () => fetchJSON<DependentPlan>(`${BASE}/fire/dependent-plan${qs ? `?${qs}` : ""}`),
   });
 }
 
