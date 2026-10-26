@@ -81,6 +81,17 @@ export default function FireConfigPage() {
     inheritance_cash: "",
     inheritance_home_monthly_cost: "",
     inheritance_vacated_home_rent: "",
+    inheritance_home_value: "",
+    // Dependent who outlives you (custom_assumptions.dependent)
+    dependent_name: "",
+    dependent_birth_date: "",
+    dependent_life_expectancy: "85",
+    dependent_annual_need: "",
+    dependent_trust_return: "4",
+    dependent_trust_balance: "",
+    dependent_death_benefit: "",
+    dependent_death_benefit_working: "",
+    dependent_include_home: true,
   });
 
   const [incomeForm, setIncomeForm] = useState({
@@ -103,6 +114,8 @@ export default function FireConfigPage() {
       const proj = ca?.projection as Record<string, unknown> | undefined;
       const inh = ca?.inheritance as Record<string, unknown> | undefined;
       const inhNum = (k: string) => (inh?.[k] != null ? String(inh[k]) : "");
+      const dep = ca?.dependent as Record<string, unknown> | undefined;
+      const depNum = (k: string) => (dep?.[k] != null ? String(dep[k]) : "");
       setForm({
         date_of_birth: config.date_of_birth || "",
         target_retirement_age: config.target_retirement_age?.toString() || "",
@@ -150,6 +163,16 @@ export default function FireConfigPage() {
         inheritance_cash: inhNum("cash"),
         inheritance_home_monthly_cost: inhNum("home_monthly_cost"),
         inheritance_vacated_home_rent: inhNum("vacated_home_rent"),
+        inheritance_home_value: inhNum("home_value"),
+        dependent_name: (dep?.name as string) || "",
+        dependent_birth_date: ((dep?.birth_date as string) || "").slice(0, 7),
+        dependent_life_expectancy: depNum("life_expectancy") || "85",
+        dependent_annual_need: depNum("annual_need"),
+        dependent_trust_return: dep?.trust_return_rate != null ? String((dep.trust_return_rate as number) * 100) : "4",
+        dependent_trust_balance: depNum("trust_balance"),
+        dependent_death_benefit: depNum("death_benefit"),
+        dependent_death_benefit_working: depNum("death_benefit_working"),
+        dependent_include_home: dep?.include_inherited_home != null ? !!dep.include_inherited_home : true,
       });
       setLastConfigVersion(version);
     }
@@ -235,7 +258,22 @@ export default function FireConfigPage() {
         cash: form.inheritance_cash ? pf(form.inheritance_cash, 0) : null,
         home_monthly_cost: form.inheritance_home_monthly_cost ? pf(form.inheritance_home_monthly_cost, 0) : null,
         vacated_home_rent: form.inheritance_vacated_home_rent ? pf(form.inheritance_vacated_home_rent, 0) : null,
+        home_value: form.inheritance_home_value ? pf(form.inheritance_home_value, 0) : null,
       },
+      // A blank birth month removes the dependent plan (the section then invites setup).
+      dependent: form.dependent_birth_date
+        ? {
+            name: form.dependent_name || null,
+            birth_date: form.dependent_birth_date,
+            life_expectancy: parseInt(form.dependent_life_expectancy) || 85,
+            annual_need: pf(form.dependent_annual_need, 0),
+            trust_return_rate: pf(form.dependent_trust_return, 4) / 100,
+            trust_balance: pf(form.dependent_trust_balance, 0),
+            death_benefit: pf(form.dependent_death_benefit, 0),
+            death_benefit_working: form.dependent_death_benefit_working ? pf(form.dependent_death_benefit_working, 0) : null,
+            include_inherited_home: form.dependent_include_home,
+          }
+        : null,
     };
 
     updateConfig.mutate(data, {
@@ -527,6 +565,59 @@ export default function FireConfigPage() {
               <label className={labelCls}>Rent From Vacated Home ($/mo)</label>
               <input type="number" step="100" value={form.inheritance_vacated_home_rent} onChange={(e) => setForm(f => ({ ...f, inheritance_vacated_home_rent: e.target.value }))} className={inputCls} />
               <p className="text-[10px] text-[var(--text-secondary)] mt-1">Net rent if you rent out the home you leave; 0 if selling</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+            <div>
+              <label className={labelCls}>Inherited Home Value ($, today&apos;s)</label>
+              <input type="number" step="50000" value={form.inheritance_home_value} onChange={(e) => setForm(f => ({ ...f, inheritance_home_value: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Used by the dependent plan when the home is left to their trust</p>
+            </div>
+          </div>
+
+          {/* Dependent */}
+          <h4 className="text-[11px] uppercase tracking-wider text-[var(--text-secondary)] mb-2 mt-5">Dependent Who Outlives You</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className={labelCls}>Name</label>
+              <input type="text" value={form.dependent_name} onChange={(e) => setForm(f => ({ ...f, dependent_name: e.target.value }))} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Birth Month</label>
+              <input type="month" value={form.dependent_birth_date} onChange={(e) => setForm(f => ({ ...f, dependent_birth_date: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Clear to remove the dependent plan</p>
+            </div>
+            <div>
+              <label className={labelCls}>Plan to Age</label>
+              <input type="number" step="1" value={form.dependent_life_expectancy} onChange={(e) => setForm(f => ({ ...f, dependent_life_expectancy: e.target.value }))} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Yearly Need ($, today&apos;s)</label>
+              <input type="number" step="5000" value={form.dependent_annual_need} onChange={(e) => setForm(f => ({ ...f, dependent_annual_need: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">What the trust pays beyond public benefits (SSI, Medicaid, in-home support)</p>
+            </div>
+            <div>
+              <label className={labelCls}>Trust Return % (real)</label>
+              <input type="number" step="0.5" value={form.dependent_trust_return} onChange={(e) => setForm(f => ({ ...f, dependent_trust_return: e.target.value }))} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>In the Trust Today ($)</label>
+              <input type="number" step="1000" value={form.dependent_trust_balance} onChange={(e) => setForm(f => ({ ...f, dependent_trust_balance: e.target.value }))} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Life Insurance While Working ($)</label>
+              <input type="number" step="10000" value={form.dependent_death_benefit_working} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit_working: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Payable to the trust through your last working month</p>
+            </div>
+            <div>
+              <label className={labelCls}>Life Insurance After Retiring ($)</label>
+              <input type="number" step="10000" value={form.dependent_death_benefit} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">E.g. a reduced paid-up policy once premiums stop</p>
+            </div>
+            <div className="flex items-center gap-2 pt-6">
+              <input id="dep-home" type="checkbox" checked={form.dependent_include_home} onChange={(e) => setForm(f => ({ ...f, dependent_include_home: e.target.checked }))} />
+              <label htmlFor="dep-home" className="text-xs text-[var(--text-secondary)]">Inherited home goes to their trust</label>
             </div>
           </div>
 

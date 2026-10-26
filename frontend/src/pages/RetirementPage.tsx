@@ -32,6 +32,7 @@ import {
   ReferenceArea,
 } from "recharts";
 import { fmtMonthYear } from "../utils/dates";
+import DependentPlanSection from "../components/DependentPlanSection";
 
 function StatCard({
   label,
@@ -906,6 +907,9 @@ export default function RetirementPage() {
             sub={`${fireNum.progress_pct}% gross`}
           />
         </div>
+
+        {/* Dependent who outlives the owner: lifetime trust funding */}
+        <DependentPlanSection spendingOverrideCents={spendingOverrideCents} />
 
         {/* FIRE Progress Bar — Accessible */}
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4">
