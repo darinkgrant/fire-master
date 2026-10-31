@@ -9,6 +9,11 @@ custom_assumptions.dependent = {
     "trust_balance": 0,             # already in the trust today (real $)
     "death_benefit": 700000,        # life insurance payable to the trust (after retirement)
     "death_benefit_working": 2000000,  # optional: through the retirement date (premiums paid)
+    # Optional, from the insurer's illustration — NOMINAL dollars by owner age once
+    # premiums stop. When present it replaces `death_benefit`, and both it and
+    # `death_benefit_working` are deflated to today's dollars at the plan's inflation.
+    "death_benefit_schedule": [{"age": 55, "current": 700000, "guaranteed": 600000}, ...],
+    "death_benefit_basis": "current",  # "current" (with dividends) | "guaranteed"
     "include_inherited_home": true, # custom_assumptions.inheritance.home_value goes to the trust
     "ira_tax_rate": 0.25,           # haircut on pre-tax accounts the trust inherits
 }
@@ -65,18 +70,58 @@ def trust_need(dep: dict, death: date) -> tuple[float, float]:
     return pv, months / 12
 
 
-def death_benefit(dep: dict, death: date, retirement: date | None) -> float:
-    """Life insurance reaching the trust. `death_benefit_working` applies through the
-    retirement date (premiums still being paid — typically the full face amount);
-    `death_benefit` after it (e.g. a reduced paid-up policy once premiums stop)."""
+def scheduled_benefit(schedule: list, owner_age: float, basis: str = "current") -> float | None:
+    """Nominal death benefit at `owner_age` from an illustration schedule, linear
+    between listed ages and flat beyond the ends; None without a usable schedule.
+    `basis` picks the column ("current" = with dividends, or "guaranteed"); a row
+    missing it falls back to the other."""
+    other = "guaranteed" if basis == "current" else "current"
+    pts = sorted(
+        (float(r["age"]), float(r.get(basis, r.get(other)) or 0))
+        for r in (schedule or [])
+        if isinstance(r, dict) and r.get("age") is not None and (r.get(basis) or r.get(other)) is not None
+    )
+    if not pts:
+        return None
+    if owner_age <= pts[0][0]:
+        return pts[0][1]
+    for (a0, v0), (a1, v1) in zip(pts, pts[1:]):
+        if owner_age <= a1:
+            return v0 + (v1 - v0) * (owner_age - a0) / (a1 - a0)
+    return pts[-1][1]
+
+
+def death_benefit(
+    dep: dict, death: date, retirement: date | None,
+    owner_age: float | None = None, inflation: float = 0.0, today: date | None = None,
+) -> float:
+    """Life insurance reaching the trust, in today's dollars.
+
+    `death_benefit_working` applies through the retirement date (premiums still
+    being paid — typically the full face amount). After it: the illustration's
+    `death_benefit_schedule` at the owner's age when one is configured, else the
+    flat `death_benefit`. With a schedule, insurance amounts are NOMINAL (that is
+    what an illustration shows) and are deflated to today's dollars; without one
+    they are taken as entered (real)."""
+    schedule = dep.get("death_benefit_schedule")
     working = dep.get("death_benefit_working")
     if working is not None and retirement is not None and death <= retirement:
-        return float(working or 0)
-    return float(dep.get("death_benefit") or 0)
+        amount = float(working or 0)
+    else:
+        amount = None
+        if schedule and owner_age is not None:
+            amount = scheduled_benefit(schedule, owner_age, dep.get("death_benefit_basis") or "current")
+        if amount is None:
+            return float(dep.get("death_benefit") or 0)
+    if schedule and today is not None and inflation:
+        years = max(0.0, (death.year - today.year) + (death.month - today.month) / 12)
+        amount /= (1 + inflation) ** years
+    return amount
 
 
 def trust_resources(
     point, dep: dict, ca: dict, death: date, today: date, retirement: date | None = None,
+    inflation: float = 0.0,
 ) -> dict[str, float]:
     """What reaches the trust if the owner dies at this projection point (real $).
 
@@ -104,6 +149,9 @@ def trust_resources(
         + (point.ira_sepp + point.ira_growth) * (1 - ira_tax),
         "property_equity": max(0.0, point.real_estate),
         "inherited_home": home,
-        "death_benefit": death_benefit(dep, death, retirement),
+        "death_benefit": death_benefit(
+            dep, death, retirement, owner_age=getattr(point, "age", None),
+            inflation=inflation, today=today,
+        ),
         "existing_trust": float(dep.get("trust_balance") or 0) * (1 + rate) ** years,
     }

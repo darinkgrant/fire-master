@@ -86,3 +86,40 @@ def test_working_death_benefit_applies_through_retirement():
     assert death_benefit(dep, date(2033, 1, 1), retire) == 250_000
     assert death_benefit(DEP, date(2030, 1, 1), retire) == 250_000  # no working amount set
     assert death_benefit(dep, date(2030, 1, 1), None) == 250_000
+
+
+SCHED = [{"age": 55, "current": 700_000, "guaranteed": 600_000},
+         {"age": 65, "current": 1_000_000, "guaranteed": 600_000},
+         {"age": 85, "current": 2_000_000, "guaranteed": 600_000}]
+
+
+def test_schedule_interpolates_and_holds_at_the_ends():
+    from app.engines.dependent_plan import scheduled_benefit
+    assert scheduled_benefit(SCHED, 50) == 700_000
+    assert scheduled_benefit(SCHED, 60) == 850_000
+    assert scheduled_benefit(SCHED, 75) == 1_500_000
+    assert scheduled_benefit(SCHED, 95) == 2_000_000
+    assert scheduled_benefit(SCHED, 75, "guaranteed") == 600_000
+    assert scheduled_benefit([], 60) is None
+
+
+def test_schedule_is_nominal_and_deflated_after_retirement():
+    from app.engines.dependent_plan import death_benefit
+    dep = {**DEP, "death_benefit_working": 2_000_000, "death_benefit_schedule": SCHED}
+    retire = date(2030, 12, 31)
+    # after retirement: schedule at owner's age, deflated 10 years at 3%
+    after = death_benefit(dep, date(2036, 10, 1), retire, owner_age=65, inflation=0.03, today=TODAY)
+    assert after == pytest.approx(1_000_000 / 1.03 ** 10)
+    # while working: the working amount, deflated the same way
+    before = death_benefit(dep, date(2028, 10, 1), retire, owner_age=57, inflation=0.03, today=TODAY)
+    assert before == pytest.approx(2_000_000 / 1.03 ** 2)
+    # guaranteed basis
+    g = death_benefit({**dep, "death_benefit_basis": "guaranteed"}, date(2036, 10, 1), retire,
+                      owner_age=65, inflation=0.0, today=TODAY)
+    assert g == 600_000
+
+
+def test_without_schedule_amounts_are_taken_as_real():
+    from app.engines.dependent_plan import death_benefit
+    assert death_benefit(DEP, date(2050, 1, 1), date(2030, 1, 1), owner_age=75,
+                         inflation=0.03, today=TODAY) == 250_000

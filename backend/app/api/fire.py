@@ -370,7 +370,10 @@ async def _dependent_rows(engine, config, dep, spending_cents):
             continue
         death = date.fromisoformat(p.date)
         need, years = trust_need(dep, death)
-        comps = trust_resources(p, dep, ca, death, today, retirement)
+        comps = trust_resources(
+            p, dep, ca, death, today, retirement,
+            inflation=(config.expected_inflation_rate or 0) / 100,
+        )
         avail = sum(comps.values())
         rows.append(DependentPlanRow(
             owner_age=round(p.age, 1), date=p.date[:7],

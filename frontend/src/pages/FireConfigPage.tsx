@@ -91,6 +91,8 @@ export default function FireConfigPage() {
     dependent_trust_balance: "",
     dependent_death_benefit: "",
     dependent_death_benefit_working: "",
+    dependent_death_benefit_basis: "current",
+    dependent_death_benefit_schedule: [] as { age: number; current?: number; guaranteed?: number }[],
     dependent_include_home: true,
   });
 
@@ -172,6 +174,9 @@ export default function FireConfigPage() {
         dependent_trust_balance: depNum("trust_balance"),
         dependent_death_benefit: depNum("death_benefit"),
         dependent_death_benefit_working: depNum("death_benefit_working"),
+        dependent_death_benefit_basis: (dep?.death_benefit_basis as string) || "current",
+        dependent_death_benefit_schedule:
+          (dep?.death_benefit_schedule as { age: number; current?: number; guaranteed?: number }[] | undefined) ?? [],
         dependent_include_home: dep?.include_inherited_home != null ? !!dep.include_inherited_home : true,
       });
       setLastConfigVersion(version);
@@ -271,6 +276,7 @@ export default function FireConfigPage() {
             trust_balance: pf(form.dependent_trust_balance, 0),
             death_benefit: pf(form.dependent_death_benefit, 0),
             death_benefit_working: form.dependent_death_benefit_working ? pf(form.dependent_death_benefit_working, 0) : null,
+            death_benefit_basis: form.dependent_death_benefit_basis,
             include_inherited_home: form.dependent_include_home,
           }
         : null,
@@ -612,8 +618,25 @@ export default function FireConfigPage() {
             </div>
             <div>
               <label className={labelCls}>Life Insurance After Retiring ($)</label>
-              <input type="number" step="10000" value={form.dependent_death_benefit} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit: e.target.value }))} className={inputCls} />
-              <p className="text-[10px] text-[var(--text-secondary)] mt-1">E.g. a reduced paid-up policy once premiums stop</p>
+              {form.dependent_death_benefit_schedule.length > 0 ? (
+                <>
+                  <select value={form.dependent_death_benefit_basis} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit_basis: e.target.value }))} className={inputCls}>
+                    <option value="current">Illustration, with dividends</option>
+                    <option value="guaranteed">Illustration, guaranteed only</option>
+                  </select>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                    By your age (dollars of that year, adjusted for inflation):{" "}
+                    {form.dependent_death_benefit_schedule
+                      .map((r) => `${r.age}: $${Math.round(((form.dependent_death_benefit_basis === "guaranteed" ? r.guaranteed : r.current) ?? r.current ?? r.guaranteed ?? 0) / 1000)}K`)
+                      .join(" · ")}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <input type="number" step="10000" value={form.dependent_death_benefit} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit: e.target.value }))} className={inputCls} />
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">E.g. a reduced paid-up policy once premiums stop</p>
+                </>
+              )}
             </div>
             <div className="flex items-center gap-2 pt-6">
               <input id="dep-home" type="checkbox" checked={form.dependent_include_home} onChange={(e) => setForm(f => ({ ...f, dependent_include_home: e.target.checked }))} />
