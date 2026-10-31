@@ -34,6 +34,9 @@ import {
 import { fmtMonthYear } from "../utils/dates";
 import DependentPlanSection from "../components/DependentPlanSection";
 
+/** The wealth projection's horizon: useWealthProjection uses the API default end_age. */
+const WEALTH_END_AGE = 82;
+
 function StatCard({
   label,
   value,
@@ -981,17 +984,34 @@ export default function RetirementPage() {
               <h3 className="text-sm font-medium text-[var(--text-secondary)]">
                 Wealth Projection
               </h3>
-              {wealthProjection && (
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-xl font-bold font-mono ${wealthProjection.total_at_end > 0 ? "glow-green" : "glow-red"}`}
-                    style={{ color: wealthProjection.total_at_end > 0 ? "var(--green)" : "var(--red)" }}
-                  >
-                    {fmtCompact(wealthProjection.total_at_end)}
-                  </span>
-                  <span className="text-sm text-[var(--text-secondary)]">at 82</span>
-                </div>
-              )}
+              {wealthProjection && (() => {
+                // The engine stops once cash and every drawable pool are empty, so
+                // total_at_end is then what was left at THAT age (property equity,
+                // illiquid assets) — not a balance at 82.
+                const pts = wealthProjection.points;
+                const lastAge = pts.length ? pts[pts.length - 1].age : WEALTH_END_AGE;
+                const ranOut = lastAge < WEALTH_END_AGE - 1;
+                return ranOut ? (
+                  <div className="text-right">
+                    <span className="text-xl font-bold font-mono glow-red" style={{ color: "var(--red)" }}>
+                      Runs out at {Math.round(lastAge)}
+                    </span>
+                    <div className="text-[11px] text-[var(--text-secondary)]">
+                      {fmtCompact(wealthProjection.total_at_end)} left then in property &amp; illiquid assets
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xl font-bold font-mono ${wealthProjection.total_at_end > 0 ? "glow-green" : "glow-red"}`}
+                      style={{ color: wealthProjection.total_at_end > 0 ? "var(--green)" : "var(--red)" }}
+                    >
+                      {fmtCompact(wealthProjection.total_at_end)}
+                    </span>
+                    <span className="text-sm text-[var(--text-secondary)]">at {WEALTH_END_AGE}</span>
+                  </div>
+                );
+              })()}
             </div>
             {wealthProjection && wealthChartData.length > 0 ? (
               <>
