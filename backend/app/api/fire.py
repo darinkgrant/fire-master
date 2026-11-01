@@ -1,4 +1,6 @@
 from datetime import date
+
+from dateutil.relativedelta import relativedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +28,7 @@ from app.models.goal import Goal
 from app.models.income_source import IncomeSource
 from app.schemas.fire import (
     DependentPlanResponse,
+    IncomeGapResponse,
     DependentPlanRow,
     FireConfigHistoryEntry,
     FireConfigResponse,
@@ -356,10 +359,12 @@ def _plan_survives(proj, end_age: float) -> bool:
     )
 
 
-async def _dependent_rows(engine, config, dep, spending_cents):
+async def _dependent_rows(engine, config, dep, spending_cents, extra_events=None):
     """Owner-death checkpoints (every 5th birthday + the planned end) vs trust need."""
     end_age = config.life_expectancy
-    proj = await engine.project_wealth_pools(end_age=end_age, spending_override_cents=spending_cents)
+    proj = await engine.project_wealth_pools(
+        end_age=end_age, spending_override_cents=spending_cents, extra_events=extra_events,
+    )
     ca = config.custom_assumptions or {}
     today = date.today()
     retirement = engine._get_retirement_date(config)
@@ -433,6 +438,102 @@ async def get_dependent_plan(
         rows=rows,
         fully_funded=survives and all(r.surplus >= 0 for r in rows),
         max_spending_fully_funded=None if best is None else round(best / 100),
+    )
+
+
+def _post_retirement_income(annual: float, start: date, *, lump: bool = False) -> list:
+    """A transient after-tax income probe from `start`: `annual` $/yr for life, or
+    with lump=True a one-time `annual` dollars that month (what-if only)."""
+    from app.models.cashflow_event import CashflowEvent
+
+    if annual <= 0:
+        return []
+    return [CashflowEvent(
+        name="What-if: extra post-retirement income", event_type="income",
+        amount_cents=int(round((annual if lump else annual / 12) * 100)), date=start,
+        is_recurring=not lump, recurrence=None if lump else "monthly", end_date=None,
+        probability=1.0, status="planned",
+    )]
+
+
+async def _bisect_dollars(ok, hi: int = 1_000_000, step: int = 1_000) -> int | None:
+    """Smallest $ amount in [0, hi] for which `ok` holds (monotone); None if even hi fails."""
+    if await ok(0):
+        return 0
+    if not await ok(hi):
+        return None
+    lo = 0
+    while hi - lo > step:
+        mid = (lo + hi) // 2
+        if await ok(mid):
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+@router.get("/income-gap", response_model=IncomeGapResponse)
+async def get_income_gap(
+    spending_override: int | None = None,
+    _user: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """How much extra after-tax income per year, starting the month after
+    retirement, the active plan needs so it never runs out at this spending —
+    for the owner alone and (if a dependent is configured) with every dependent
+    checkpoint funded. When none is needed, reports the owner's spending cushion."""
+    engine = FireProjectionsEngine(db)
+    config = await engine.get_effective_config()
+    end_age = config.life_expectancy
+    spending_cents = (
+        spending_override if spending_override is not None
+        else await engine._get_annual_spending(config)
+    )
+    today = date.today()
+    retire = engine._get_retirement_date(config)
+    start = (retire.replace(day=1) + relativedelta(months=1)) if retire and retire >= today else today.replace(day=1)
+
+    async def own_ok(extra: int, cents: int = spending_cents, lump: bool = False) -> bool:
+        proj = await engine.project_wealth_pools(
+            end_age=end_age, spending_override_cents=cents,
+            extra_events=_post_retirement_income(extra, start, lump=lump),
+        )
+        return _plan_survives(proj, end_age)
+
+    own_gap = await _bisect_dollars(own_ok)
+    lump = None
+    if own_gap:
+        async def lump_ok(amount: int) -> bool:
+            return await own_ok(amount, lump=True)
+        lump = await _bisect_dollars(lump_ok, hi=10_000_000, step=5_000)
+    cushion = None
+    if own_gap == 0:
+        # headroom: the most extra spending the plan absorbs with no extra income
+        async def spend_ok(more: int) -> bool:
+            return await own_ok(0, spending_cents + more * 100)
+        lo, hi = 0, 600_000
+        while hi - lo > 1_000:
+            mid = (lo + hi) // 2
+            lo, hi = (mid, hi) if await spend_ok(mid) else (lo, mid)
+        cushion = float(lo)
+
+    dep = dependent_cfg(config.custom_assumptions)
+    dep_gap, dep_age = None, None
+    if dep is not None:
+        rows, _ = await _dependent_rows(engine, config, dep, spending_cents)
+        if rows:
+            worst = min(rows, key=lambda r: r.surplus)
+            dep_gap, dep_age = max(0.0, -worst.surplus), worst.owner_age
+
+    return IncomeGapResponse(
+        spending=round(spending_cents / 100),
+        income_starts=start.strftime("%Y-%m"),
+        own_gap=None if own_gap is None else float(own_gap),
+        own_lump_sum=None if lump is None else float(lump),
+        own_cushion=cushion,
+        dependent_name=dep.get("name") if dep else None,
+        dependent_insurance_gap=dep_gap,
+        dependent_gap_age=dep_age,
     )
 
 

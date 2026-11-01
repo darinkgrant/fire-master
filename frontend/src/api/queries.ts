@@ -47,6 +47,7 @@ import type {
   FireScenario,
   SpendingSensitivity,
   DependentPlan,
+  IncomeGap,
 } from "../types/fire";
 import type {
   BracketAnalysis,
@@ -329,6 +330,16 @@ export function useDependentPlan(spendingOverride?: number) {
   return useQuery({
     queryKey: ["fire", "dependent-plan", spendingOverride ?? "default"],
     queryFn: () => fetchJSON<DependentPlan>(`${BASE}/fire/dependent-plan${qs ? `?${qs}` : ""}`),
+  });
+}
+
+export function useIncomeGap(spendingOverride?: number) {
+  const params = new URLSearchParams();
+  if (spendingOverride != null) params.set("spending_override", String(spendingOverride));
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ["fire", "income-gap", spendingOverride ?? "default"],
+    queryFn: () => fetchJSON<IncomeGap>(`${BASE}/fire/income-gap${qs ? `?${qs}` : ""}`),
   });
 }
 

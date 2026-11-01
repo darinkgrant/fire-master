@@ -33,6 +33,7 @@ import {
 } from "recharts";
 import { fmtMonthYear } from "../utils/dates";
 import DependentPlanSection from "../components/DependentPlanSection";
+import IncomeGapCard from "../components/IncomeGapCard";
 
 /** The wealth projection's horizon: useWealthProjection uses the API default end_age. */
 const WEALTH_END_AGE = 82;
@@ -912,6 +913,7 @@ export default function RetirementPage() {
         </div>
 
         {/* Dependent who outlives the owner: lifetime trust funding */}
+        <IncomeGapCard spendingOverrideCents={spendingOverrideCents} />
         <DependentPlanSection spendingOverrideCents={spendingOverrideCents} />
 
         {/* FIRE Progress Bar — Accessible */}

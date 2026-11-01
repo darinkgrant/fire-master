@@ -313,3 +313,15 @@ export interface DependentPlan {
   fully_funded: boolean | null;
   max_spending_fully_funded: number | null;
 }
+
+/** GET /api/fire/income-gap — what it takes for the plan to never run out. */
+export interface IncomeGap {
+  spending: number;
+  income_starts: string | null;
+  own_gap: number | null;
+  own_lump_sum: number | null;
+  own_cushion: number | null;
+  dependent_name: string | null;
+  dependent_insurance_gap: number | null;
+  dependent_gap_age: number | null;
+}
