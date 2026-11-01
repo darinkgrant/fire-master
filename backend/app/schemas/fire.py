@@ -496,3 +496,17 @@ class DependentPlanResponse(BaseModel):
     rows: list[DependentPlanRow] = []
     fully_funded: bool | None = None  # every row has surplus >= 0 and the owner's plan survives
     max_spending_fully_funded: float | None = None  # highest owner spending meeting both
+
+
+class IncomeGapResponse(BaseModel):
+    """Extra yearly income needed after retirement so the plan never runs out."""
+    spending: float  # owner's annual spending this was computed at (real $)
+    income_starts: str | None  # "YYYY-MM": the month after the last working month
+    own_gap: float | None  # after-tax $/yr needed so the owner's plan lasts; 0 = none needed; None = not reachable
+    own_lump_sum: float | None = None  # or: one-time extra savings at retirement that closes it
+    own_cushion: float | None = None  # when own_gap == 0: how much more could be spent per year
+    dependent_name: str | None = None
+    # Largest dependent-trust shortfall across owner-death checkpoints at this
+    # spending — a lump sum, i.e. extra life insurance payable to the trust.
+    dependent_insurance_gap: float | None = None
+    dependent_gap_age: float | None = None  # owner age at the worst checkpoint

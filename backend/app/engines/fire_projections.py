@@ -1147,8 +1147,12 @@ class FireProjectionsEngine:
         bridge_months: int = 0,
         scenario_id: uuid_mod.UUID | None = None,
         spending_override_cents: int | None = None,
+        extra_events: list | None = None,
     ) -> WealthPoolProjection:
         """Pool-aware wealth projection: cash, IRA-A (SEPP), IRA-B (growth).
+
+        `extra_events`: transient CashflowEvent rows added to the plan's own for this
+        run only (what-if probes such as the post-retirement income gap).
 
         Pulls all assumptions from the DB (FIRE config, income sources, accounts).
 
@@ -1416,6 +1420,7 @@ class FireProjectionsEngine:
         # renders for money that never lands. Opt-in per sale via
         # "suppress_cashflow_match"; only active when generic sales are on.
         cashflow_events = await self._get_cashflow_events(config)
+        cashflow_events += list(extra_events or [])
 
         def _sale_suppresses(cf: CashflowEvent) -> bool:
             return use_generic_sales and sale_event_suppressed(cf, property_sales)
