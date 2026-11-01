@@ -34,9 +34,31 @@ import {
 import { fmtMonthYear } from "../utils/dates";
 import DependentPlanSection from "../components/DependentPlanSection";
 import IncomeGapCard from "../components/IncomeGapCard";
+import PlanSummary from "../components/PlanSummary";
 
 /** The wealth projection's horizon: useWealthProjection uses the API default end_age. */
 const WEALTH_END_AGE = 82;
+
+/** The what-if monthly budget, remembered in this browser across reloads and logins. */
+const BUDGET_KEY = "firemaster.retirement.budgetMonthly";
+
+function loadBudget(): number | null {
+  try {
+    const v = parseFloat(localStorage.getItem(BUDGET_KEY) ?? "");
+    return isNaN(v) ? null : v;
+  } catch {
+    return null;
+  }
+}
+
+function saveBudget(v: number | null) {
+  try {
+    if (v == null) localStorage.removeItem(BUDGET_KEY);
+    else localStorage.setItem(BUDGET_KEY, String(v));
+  } catch {
+    /* storage blocked: the value just won't survive a reload */
+  }
+}
 
 function StatCard({
   label,
@@ -700,12 +722,15 @@ export default function RetirementPage() {
   const { data: bridge } = useBridgeStatus();
   const { data: sensitivity } = useSpendingSensitivity();
 
-  // Spending sensitivity state — ephemeral, not persisted
-  const [baseOverride, setBaseOverride] = useState<number | null>(null);
-  const [debouncedOverride, setDebouncedOverride] = useState<number | null>(null);
+  // What-if monthly budget — remembered in this browser (not written to the plan)
+  const [baseOverride, setBaseOverride] = useState<number | null>(loadBudget);
+  const [debouncedOverride, setDebouncedOverride] = useState<number | null>(baseOverride);
 
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedOverride(baseOverride), 500);
+    const t = setTimeout(() => {
+      setDebouncedOverride(baseOverride);
+      saveBudget(baseOverride);
+    }, 500);
     return () => clearTimeout(t);
   }, [baseOverride]);
 
@@ -800,6 +825,18 @@ export default function RetirementPage() {
             </Link>
           </div>
         </div>
+
+        {sensitivity && (
+          <PlanSummary
+            budget={baseOverride ?? sensitivity.base_monthly}
+            baseBudget={sensitivity.base_monthly}
+            onBudgetChange={setBaseOverride}
+            healthcare={sensitivity.healthcare_monthly}
+            retirementDate={timeline?.projected_retirement_date}
+            cashZeroMonth={bridgeProjection?.cash_zero_month}
+            spendingOverrideCents={spendingOverrideCents}
+          />
+        )}
 
         {/* FIRE Countdown Hero */}
         {timeline ? (
@@ -913,8 +950,12 @@ export default function RetirementPage() {
         </div>
 
         {/* Dependent who outlives the owner: lifetime trust funding */}
-        <IncomeGapCard spendingOverrideCents={spendingOverrideCents} />
-        <DependentPlanSection spendingOverrideCents={spendingOverrideCents} />
+        <div id="income-gap" className="scroll-mt-4">
+          <IncomeGapCard spendingOverrideCents={spendingOverrideCents} />
+        </div>
+        <div id="dependent" className="scroll-mt-4">
+          <DependentPlanSection spendingOverrideCents={spendingOverrideCents} />
+        </div>
 
         {/* FIRE Progress Bar — Accessible */}
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4">
@@ -969,15 +1010,19 @@ export default function RetirementPage() {
         </div>
 
         {/* Spending Sensitivity */}
-        <SpendingSensitivityCard
-          baseOverride={baseOverride}
-          onBaseChange={setBaseOverride}
-          sensitivity={sensitivity}
-        />
+        <div id="spending" className="scroll-mt-4">
+          <SpendingSensitivityCard
+            baseOverride={baseOverride}
+            onBaseChange={setBaseOverride}
+            sensitivity={sensitivity}
+          />
+        </div>
 
         {/* Bridge Chart — 60 Month Detail */}
         {bridgeProjection && bridgeProjection.points.length > 0 && (
-          <BridgeChart points={bridgeProjection.points} events={bridgeProjection.events} currentCash={bridge?.cash_balance} />
+          <div id="cash" className="scroll-mt-4">
+            <BridgeChart points={bridgeProjection.points} events={bridgeProjection.events} currentCash={bridge?.cash_balance} />
+          </div>
         )}
 
         {/* Wealth Projection — Full Width */}
