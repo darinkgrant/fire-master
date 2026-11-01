@@ -70,3 +70,40 @@ def test_response_exposes_the_flag_not_custom_data():
     dumped = resp.model_dump()
     assert dumped["ends_at_retirement"] is True
     assert "custom_data" not in dumped
+
+
+def _premium(**kw):
+    return _pay(name="Life insurance premium", event_type="expense", recurrence="annual",
+                custom_data={"end_at": "premiums"}, **kw)
+
+
+def test_premiums_default_to_the_retirement_month():
+    from app.engines.fire_projections import premium_end_date
+    retire = date(2032, 8, 31)
+    assert premium_end_date({}, retire) == retire
+    assert premium_end_date({"life_insurance": {"premium_end_date": None}}, retire) == retire
+    out = apply_retirement_end([_premium()], retire, premium_end_date({}, retire))
+    assert out[0].end_date == retire
+
+
+def test_premium_end_override_moves_only_premium_events():
+    from app.engines.fire_projections import premium_end_date
+    retire = date(2032, 8, 31)
+    end = premium_end_date({"life_insurance": {"premium_end_date": "2036-10"}}, retire)
+    assert end == date(2036, 10, 31)
+    pay, prem = apply_retirement_end([_pay(), _premium()], retire, end)
+    assert pay.end_date == retire
+    assert prem.end_date == date(2036, 10, 31)
+
+
+def test_premium_anchor_without_retirement_uses_override():
+    out = apply_retirement_end([_premium(), _pay()], None, date(2036, 10, 31))
+    assert out[0].end_date == date(2036, 10, 31)
+    assert out[1].end_date == date(2030, 8, 31)  # retirement anchor, no date: stored end
+
+
+def test_response_exposes_end_at():
+    resp = CashflowEventResponse.model_validate(_premium(id=uuid.uuid4(), created_at=None))
+    dumped = resp.model_dump()
+    assert dumped["end_at"] == "premiums"
+    assert dumped["ends_at_retirement"] is False

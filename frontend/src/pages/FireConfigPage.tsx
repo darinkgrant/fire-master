@@ -91,6 +91,9 @@ export default function FireConfigPage() {
     dependent_trust_balance: "",
     dependent_death_benefit: "",
     dependent_death_benefit_working: "",
+    dependent_death_benefit_premiums: "",
+    // custom_assumptions.life_insurance.premium_end_date — blank = at retirement
+    premium_end_month: "",
     dependent_death_benefit_basis: "current",
     dependent_death_benefit_schedule: [] as { age: number; current?: number; guaranteed?: number }[],
     dependent_include_home: true,
@@ -174,6 +177,8 @@ export default function FireConfigPage() {
         dependent_trust_balance: depNum("trust_balance"),
         dependent_death_benefit: depNum("death_benefit"),
         dependent_death_benefit_working: depNum("death_benefit_working"),
+        dependent_death_benefit_premiums: depNum("death_benefit_premiums"),
+        premium_end_month: (((ca?.life_insurance as Record<string, unknown> | undefined)?.premium_end_date as string) || "").slice(0, 7),
         dependent_death_benefit_basis: (dep?.death_benefit_basis as string) || "current",
         dependent_death_benefit_schedule:
           (dep?.death_benefit_schedule as { age: number; current?: number; guaranteed?: number }[] | undefined) ?? [],
@@ -265,6 +270,8 @@ export default function FireConfigPage() {
         vacated_home_rent: form.inheritance_vacated_home_rent ? pf(form.inheritance_vacated_home_rent, 0) : null,
         home_value: form.inheritance_home_value ? pf(form.inheritance_home_value, 0) : null,
       },
+      // Blank = premiums stop at retirement (merge-patch null deletes the override).
+      life_insurance: { premium_end_date: form.premium_end_month || null },
       // A blank birth month removes the dependent plan (the section then invites setup).
       dependent: form.dependent_birth_date
         ? {
@@ -276,6 +283,7 @@ export default function FireConfigPage() {
             trust_balance: pf(form.dependent_trust_balance, 0),
             death_benefit: pf(form.dependent_death_benefit, 0),
             death_benefit_working: form.dependent_death_benefit_working ? pf(form.dependent_death_benefit_working, 0) : null,
+            death_benefit_premiums: form.dependent_death_benefit_premiums ? pf(form.dependent_death_benefit_premiums, 0) : null,
             death_benefit_basis: form.dependent_death_benefit_basis,
             include_inherited_home: form.dependent_include_home,
           }
@@ -617,7 +625,19 @@ export default function FireConfigPage() {
               <p className="text-[10px] text-[var(--text-secondary)] mt-1">Payable to the trust through your last working month</p>
             </div>
             <div>
-              <label className={labelCls}>Life Insurance After Retiring ($)</label>
+              <label className={labelCls}>Premiums Stop</label>
+              <input type="month" value={form.premium_end_month} onChange={(e) => setForm(f => ({ ...f, premium_end_month: e.target.value }))} className={inputCls} />
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">Blank = at retirement. Ends events set to &ldquo;when premiums stop&rdquo;</p>
+            </div>
+            {form.premium_end_month && (
+              <div>
+                <label className={labelCls}>Life Insurance While Premiums Continue ($)</label>
+                <input type="number" step="10000" value={form.dependent_death_benefit_premiums} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit_premiums: e.target.value }))} className={inputCls} />
+                <p className="text-[10px] text-[var(--text-secondary)] mt-1">After retiring, until premiums stop. Blank = the after-premiums amount</p>
+              </div>
+            )}
+            <div>
+              <label className={labelCls}>Life Insurance After Premiums Stop ($)</label>
               {form.dependent_death_benefit_schedule.length > 0 ? (
                 <>
                   <select value={form.dependent_death_benefit_basis} onChange={(e) => setForm(f => ({ ...f, dependent_death_benefit_basis: e.target.value }))} className={inputCls}>

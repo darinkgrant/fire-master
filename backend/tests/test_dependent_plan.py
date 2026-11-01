@@ -123,3 +123,16 @@ def test_without_schedule_amounts_are_taken_as_real():
     from app.engines.dependent_plan import death_benefit
     assert death_benefit(DEP, date(2050, 1, 1), date(2030, 1, 1), owner_age=75,
                          inflation=0.03, today=TODAY) == 250_000
+
+
+def test_premiums_benefit_applies_between_retirement_and_premium_end():
+    from app.engines.dependent_plan import death_benefit
+    dep = {**DEP, "death_benefit_working": 1_000_000, "death_benefit_premiums": 600_000}
+    retire, prem_end = date(2032, 8, 31), date(2036, 10, 31)
+    assert death_benefit(dep, date(2032, 8, 1), retire, premium_end=prem_end) == 1_000_000
+    assert death_benefit(dep, date(2034, 1, 1), retire, premium_end=prem_end) == 600_000
+    assert death_benefit(dep, date(2037, 1, 1), retire, premium_end=prem_end) == 250_000
+    # premiums stop at retirement (the default): straight to the after-premiums benefit
+    assert death_benefit(dep, date(2034, 1, 1), retire, premium_end=retire) == 250_000
+    # no amount entered for the premium years: conservative after-premiums benefit
+    assert death_benefit(DEP, date(2034, 1, 1), retire, premium_end=prem_end) == 250_000

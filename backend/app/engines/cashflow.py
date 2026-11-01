@@ -44,6 +44,7 @@ class CashflowEngine:
         # property sales (_get_plan_sales reads the same effective config).
         self._plan_inheritance_events: list[CashflowEvent] = []
         self._plan_retirement_date: date | None = None
+        self._plan_premium_end: date | None = None
 
     async def get_current_cash(self) -> float:
         """Liquid cash for the runway projection.
@@ -180,7 +181,11 @@ class CashflowEngine:
         what-if with no date to put on a cash calendar. Returns
         (sales, real RE appreciation rate, active scenario name or None).
         """
-        from app.engines.fire_projections import FireProjectionsEngine, inheritance_events
+        from app.engines.fire_projections import (
+            FireProjectionsEngine,
+            inheritance_events,
+            premium_end_date,
+        )
         from app.models.fire_scenario import FireScenario
 
         fire_engine = FireProjectionsEngine(self.db)
@@ -188,6 +193,7 @@ class CashflowEngine:
         ca = config.custom_assumptions or {}
         self._plan_inheritance_events = inheritance_events(ca)
         self._plan_retirement_date = fire_engine._get_retirement_date(config)
+        self._plan_premium_end = premium_end_date(ca, self._plan_retirement_date)
         sales = [
             s for s in (ca.get("property_sales") or [])
             if isinstance(s, dict) and s.get("sale_date")
@@ -286,7 +292,8 @@ class CashflowEngine:
 
         plan_sales, re_appreciation, scenario_name = await self._get_plan_sales()
         by_month, labels_by_month = build_cashflow_schedule(
-            apply_retirement_end(events, self._plan_retirement_date) + self._plan_inheritance_events,
+            apply_retirement_end(events, self._plan_retirement_date, self._plan_premium_end)
+            + self._plan_inheritance_events,
             today, months,
             skip=(lambda cf: sale_event_suppressed(cf, plan_sales)) if plan_sales else None,
         )

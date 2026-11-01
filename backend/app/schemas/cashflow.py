@@ -1,6 +1,7 @@
 """Schemas for cash flow events and runway projections."""
 
 import datetime as _dt
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, computed_field
@@ -21,8 +22,12 @@ class CashflowEventCreate(BaseModel):
     category: str | None = None
     linked_account_id: UUID | None = None
     notes: str | None = None
-    # Stop at the plan's retirement month (stored as custom_data.end_at = "retirement");
-    # end_date stays the fallback when no retirement date is configured.
+    # Stop at a plan month (stored as custom_data.end_at): "retirement" = the last
+    # working month, "premiums" = when life-insurance premiums stop (defaults to
+    # retirement; custom_assumptions.life_insurance.premium_end_date overrides).
+    # end_date stays the fallback when no anchor date is configured.
+    # ends_at_retirement is the older boolean spelling of end_at="retirement".
+    end_at: Literal["retirement", "premiums"] | None = None
     ends_at_retirement: bool = False
 
 
@@ -39,6 +44,7 @@ class CashflowEventUpdate(BaseModel):
     category: str | None = None
     linked_account_id: UUID | None = None
     notes: str | None = None
+    end_at: Literal["retirement", "premiums"] | None = None  # explicit null clears it
     ends_at_retirement: bool | None = None
 
 
@@ -66,8 +72,13 @@ class CashflowEventResponse(BaseModel):
 
     @computed_field
     @property
+    def end_at(self) -> str | None:
+        return self.custom_data.get("end_at") if isinstance(self.custom_data, dict) else None
+
+    @computed_field
+    @property
     def ends_at_retirement(self) -> bool:
-        return isinstance(self.custom_data, dict) and self.custom_data.get("end_at") == "retirement"
+        return self.end_at == "retirement"
 
     model_config = {"from_attributes": True}
 

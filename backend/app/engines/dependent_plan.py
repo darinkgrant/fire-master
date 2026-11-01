@@ -9,9 +9,14 @@ custom_assumptions.dependent = {
     "trust_balance": 0,             # already in the trust today (real $)
     "death_benefit": 700000,        # life insurance payable to the trust (after retirement)
     "death_benefit_working": 2000000,  # optional: through the retirement date (premiums paid)
+    # Optional: after retirement while premiums are still paid (premium end set later
+    # than retirement in custom_assumptions.life_insurance.premium_end_date) — e.g. the
+    # policy's full face without a workplace group policy. Unset → the after-premiums
+    # benefit below (conservative).
+    "death_benefit_premiums": 2000000,
     # Optional, from the insurer's illustration — NOMINAL dollars by owner age once
-    # premiums stop. When present it replaces `death_benefit`, and both it and
-    # `death_benefit_working` are deflated to today's dollars at the plan's inflation.
+    # premiums stop. When present it replaces `death_benefit`, and it, `death_benefit_working`
+    # and `death_benefit_premiums` are deflated to today's dollars at the plan's inflation.
     "death_benefit_schedule": [{"age": 55, "current": 700000, "guaranteed": 600000}, ...],
     "death_benefit_basis": "current",  # "current" (with dividends) | "guaranteed"
     "include_inherited_home": true, # custom_assumptions.inheritance.home_value goes to the trust
@@ -94,19 +99,25 @@ def scheduled_benefit(schedule: list, owner_age: float, basis: str = "current") 
 def death_benefit(
     dep: dict, death: date, retirement: date | None,
     owner_age: float | None = None, inflation: float = 0.0, today: date | None = None,
+    premium_end: date | None = None,
 ) -> float:
     """Life insurance reaching the trust, in today's dollars.
 
     `death_benefit_working` applies through the retirement date (premiums still
-    being paid — typically the full face amount). After it: the illustration's
+    being paid — typically the full face amount). When premiums continue past
+    retirement (`premium_end` later than it), `death_benefit_premiums` applies
+    through `premium_end` if set. After that: the illustration's
     `death_benefit_schedule` at the owner's age when one is configured, else the
     flat `death_benefit`. With a schedule, insurance amounts are NOMINAL (that is
     what an illustration shows) and are deflated to today's dollars; without one
     they are taken as entered (real)."""
     schedule = dep.get("death_benefit_schedule")
     working = dep.get("death_benefit_working")
+    paying = dep.get("death_benefit_premiums")
     if working is not None and retirement is not None and death <= retirement:
         amount = float(working or 0)
+    elif paying is not None and premium_end is not None and death <= premium_end:
+        amount = float(paying or 0)
     else:
         amount = None
         if schedule and owner_age is not None:
@@ -121,7 +132,7 @@ def death_benefit(
 
 def trust_resources(
     point, dep: dict, ca: dict, death: date, today: date, retirement: date | None = None,
-    inflation: float = 0.0,
+    inflation: float = 0.0, premium_end: date | None = None,
 ) -> dict[str, float]:
     """What reaches the trust if the owner dies at this projection point (real $).
 
@@ -151,7 +162,7 @@ def trust_resources(
         "inherited_home": home,
         "death_benefit": death_benefit(
             dep, death, retirement, owner_age=getattr(point, "age", None),
-            inflation=inflation, today=today,
+            inflation=inflation, today=today, premium_end=premium_end,
         ),
         "existing_trust": float(dep.get("trust_balance") or 0) * (1 + rate) ** years,
     }
