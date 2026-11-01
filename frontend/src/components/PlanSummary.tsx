@@ -90,6 +90,8 @@ export default function PlanSummary({
           <span className="text-[var(--text-secondary)] mr-0.5">$</span>
           <input
             type="number"
+            min={0}
+            step={500}
             aria-label="Total monthly budget, including housing"
             value={budget}
             onChange={(e) => {
