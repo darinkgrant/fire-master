@@ -542,6 +542,8 @@ function SpendingSensitivityCard({
           <span className="text-sm text-[var(--text-secondary)]">$</span>
           <input
             type="number"
+            min={0}
+            step={500}
             value={displayBase}
             onChange={(e) => {
               const v = parseFloat(e.target.value);
