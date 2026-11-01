@@ -425,13 +425,27 @@ function PropertyDetail({
     scrolled ? "after:opacity-100" : "after:opacity-0"
   }`;
 
-  // Months that actually have data for this property, sorted.
+  // Every calendar month from this property's first activity to the window's
+  // last month, gaps included: hiding empty months made a quarterly mortgage or
+  // semi-annual tax bill look like a monthly one.
   const activeMonths = useMemo(() => {
     const s = new Set<string>();
     Object.values(data.categories).forEach((byMonth) =>
       Object.keys(byMonth).forEach((m) => s.add(m)),
     );
-    return months.filter((m) => s.has(m));
+    const first = months.find((m) => s.has(m));
+    const last = months[months.length - 1];
+    if (!first || !last) return [];
+    const out: string[] = [];
+    let y = Number(first.slice(0, 4));
+    let mo = Number(first.slice(5, 7));
+    for (let key = first; key <= last; ) {
+      out.push(key);
+      mo += 1;
+      if (mo > 12) { mo = 1; y += 1; }
+      key = `${y}-${String(mo).padStart(2, "0")}`;
+    }
+    return out;
   }, [data, months]);
 
   const expenseCats = useMemo(
