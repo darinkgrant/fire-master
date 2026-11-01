@@ -14,6 +14,7 @@ Two modeling STRUCTURES remain (do not copy mechanics between them):
   bridge chart, and scenario comparisons.
 """
 
+import calendar
 import logging
 import uuid as uuid_mod
 from copy import deepcopy
@@ -255,6 +256,7 @@ def retirement_contributions_monthly(ca: dict | None) -> float:
 
 
 END_AT_RETIREMENT = "retirement"
+END_AT_PREMIUMS = "premiums"
 
 
 def ends_at_retirement(cf) -> bool:
@@ -262,21 +264,39 @@ def ends_at_retirement(cf) -> bool:
     return isinstance(getattr(cf, "custom_data", None), dict) and cf.custom_data.get("end_at") == END_AT_RETIREMENT
 
 
-def apply_retirement_end(events: list, retirement_date: date | None) -> list:
-    """Events flagged "ends at retirement" get the plan's retirement date as their
-    end date (inclusive month — retirement_date is the last working day), so take-home
-    pay, work-funded costs and premiums move with the one retirement month. Copies are
-    transient: the stored row keeps its own end_date as the fallback when no
-    retirement date is set."""
-    if retirement_date is None:
+def premium_end_date(ca: dict | None, retirement_date: date | None) -> date | None:
+    """When life-insurance premiums stop: the last day of
+    custom_assumptions.life_insurance.premium_end_date ("YYYY-MM") when set,
+    else the retirement date — premiums stop with work unless overridden."""
+    raw = str(((ca or {}).get("life_insurance") or {}).get("premium_end_date") or "")[:7]
+    if len(raw) == 7:
+        y, m = int(raw[:4]), int(raw[5:7])
+        return date(y, m, calendar.monthrange(y, m)[1])
+    return retirement_date
+
+
+def apply_retirement_end(
+    events: list, retirement_date: date | None, premium_end: date | None = None,
+) -> list:
+    """Events anchored to a plan month get that month as their end date (inclusive):
+    end_at "retirement" → the retirement date (the last working day), so take-home
+    pay and work-funded costs move with the one retirement month; end_at "premiums"
+    → the premium end (premium_end_date(), which defaults to retirement). Copies
+    are transient: the stored row keeps its own end_date as the fallback when no
+    anchor date is set."""
+    premium_end = premium_end or retirement_date
+    if retirement_date is None and premium_end is None:
         return events
     out = []
     for cf in events:
-        if ends_at_retirement(cf):
+        cd = getattr(cf, "custom_data", None)
+        anchor = cd.get("end_at") if isinstance(cd, dict) else None
+        end = {END_AT_RETIREMENT: retirement_date, END_AT_PREMIUMS: premium_end}.get(anchor)
+        if end is not None:
             cf = CashflowEvent(
                 name=cf.name, event_type=cf.event_type, amount_cents=cf.amount_cents,
                 date=cf.date, is_recurring=cf.is_recurring, recurrence=cf.recurrence,
-                end_date=retirement_date, probability=cf.probability, status=cf.status,
+                end_date=end, probability=cf.probability, status=cf.status,
                 category=cf.category, custom_data=cf.custom_data,
             )
         out.append(cf)
@@ -565,7 +585,10 @@ class FireProjectionsEngine:
         )
         events = list(result.scalars().all())
         if config is not None:
-            events = apply_retirement_end(events, self._get_retirement_date(config))
+            retire = self._get_retirement_date(config)
+            events = apply_retirement_end(
+                events, retire, premium_end_date(config.custom_assumptions, retire),
+            )
             events += inheritance_events(config.custom_assumptions)
         return events
 

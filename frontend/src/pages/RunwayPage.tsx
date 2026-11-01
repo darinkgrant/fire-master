@@ -25,7 +25,7 @@ import { formatCurrency, fmtAxis, fmtCompact } from "../utils/formatting";
 import { TOOLTIP_STYLE } from "../utils/theme";
 import { useEventMarkers } from "../components/charts/EventMarkers";
 import type { EventMarkerGroup } from "../components/charts/EventMarkers";
-import type { CashflowEvent, CashflowEventCreate } from "../types/cashflow";
+import type { CashflowEvent, CashflowEventCreate, EventEndAnchor } from "../types/cashflow";
 import type { FireConfig } from "../types/fire";
 import { fmtDate, fmtMonthYear, parseLocalDate, todayISO } from "../utils/dates";
 
@@ -91,7 +91,7 @@ function EventModal({
           status: initial.status,
           category: initial.category,
           notes: initial.notes,
-          ends_at_retirement: initial.ends_at_retirement,
+          end_at: initial.end_at,
         }
       : {
           name: "",
@@ -105,7 +105,7 @@ function EventModal({
           status: "planned",
           category: null,
           notes: null,
-          ends_at_retirement: false,
+          end_at: null,
         },
   );
 
@@ -249,18 +249,24 @@ function EventModal({
               type="date"
               className={inputCls}
               value={form.end_date || ""}
-              disabled={!!form.ends_at_retirement}
+              disabled={!!form.end_at}
               onChange={(e) =>
                 setForm({ ...form, end_date: e.target.value || null })
               }
             />
-            <label className="flex items-center gap-2 mt-2 text-xs text-[var(--text-secondary)]">
-              <input
-                type="checkbox"
-                checked={!!form.ends_at_retirement}
-                onChange={(e) => setForm({ ...form, ends_at_retirement: e.target.checked })}
-              />
-              Ends at retirement (follows Settings &rarr; Last Working Month)
+            <label className="block mt-2 text-xs text-[var(--text-secondary)]">
+              Or ends with the plan
+              <select
+                className={`${inputCls} mt-1`}
+                value={form.end_at ?? ""}
+                onChange={(e) =>
+                  setForm({ ...form, end_at: (e.target.value || null) as EventEndAnchor | null })
+                }
+              >
+                <option value="">No, use the end date</option>
+                <option value="retirement">At retirement (Settings &rarr; Last Working Month)</option>
+                <option value="premiums">When premiums stop (Settings &rarr; Premiums Stop)</option>
+              </select>
             </label>
           </div>
         )}
@@ -371,7 +377,7 @@ function EventRow({
           <div className="text-[10px] text-[var(--text-secondary)]">
             {evt.date}
             {evt.is_recurring &&
-              ` / ${evt.recurrence} → ${evt.ends_at_retirement ? "retirement" : (evt.end_date ?? "ongoing")}`}
+              ` / ${evt.recurrence} → ${evt.end_at === "premiums" ? "premiums stop" : evt.end_at === "retirement" ? "retirement" : (evt.end_date ?? "ongoing")}`}
             {evt.probability < 1 &&
               ` / ${(evt.probability * 100).toFixed(0)}% likely`}
           </div>

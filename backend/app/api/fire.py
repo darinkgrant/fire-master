@@ -16,7 +16,7 @@ from app.engines.dependent_plan import (
     trust_need,
     trust_resources,
 )
-from app.engines.fire_projections import FireProjectionsEngine
+from app.engines.fire_projections import FireProjectionsEngine, premium_end_date
 from app.engines.net_worth import NetWorthEngine
 from app.engines.plan_months import is_held, pin_plan_months
 from app.engines.spending import SpendingEngine
@@ -368,6 +368,7 @@ async def _dependent_rows(engine, config, dep, spending_cents, extra_events=None
     ca = config.custom_assumptions or {}
     today = date.today()
     retirement = engine._get_retirement_date(config)
+    premium_end = premium_end_date(ca, retirement)
     rows = []
     pts = proj.points
     for i, p in enumerate(pts):
@@ -377,7 +378,7 @@ async def _dependent_rows(engine, config, dep, spending_cents, extra_events=None
         need, years = trust_need(dep, death)
         comps = trust_resources(
             p, dep, ca, death, today, retirement,
-            inflation=(config.expected_inflation_rate or 0) / 100,
+            inflation=(config.expected_inflation_rate or 0) / 100, premium_end=premium_end,
         )
         avail = sum(comps.values())
         rows.append(DependentPlanRow(

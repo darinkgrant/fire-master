@@ -52,7 +52,11 @@ async def create_event(
         category=data.category,
         linked_account_id=data.linked_account_id,
         notes=data.notes,
-        custom_data={"end_at": "retirement"} if data.ends_at_retirement else None,
+        custom_data=(
+            {"end_at": anchor}
+            if (anchor := data.end_at or ("retirement" if data.ends_at_retirement else None))
+            else None
+        ),
     )
     db.add(event)
     await db.commit()
@@ -77,11 +81,14 @@ async def update_event(
     update_data = data.model_dump(exclude_unset=True)
     if "amount" in update_data:
         update_data["amount_cents"] = int(round(update_data.pop("amount") * 100))
-    if "ends_at_retirement" in update_data:
-        flag = update_data.pop("ends_at_retirement")
+    if "end_at" in update_data or "ends_at_retirement" in update_data:
+        flag = update_data.pop("ends_at_retirement", None)
+        anchor = update_data.pop("end_at") if "end_at" in data.model_fields_set else (
+            "retirement" if flag else None
+        )
         cd = dict(event.custom_data or {})
-        if flag:
-            cd["end_at"] = "retirement"
+        if anchor:
+            cd["end_at"] = anchor
         else:
             cd.pop("end_at", None)
         event.custom_data = cd or None  # reassigned dict → SQLAlchemy sees the JSONB change
