@@ -720,13 +720,15 @@ class TaxEngine:
             taxable_pension = 0.0
             taxable_other = 0.0
 
+            from app.engines.fire_projections import ends_with_work
+
             for src in income_sources:
                 # Day-prorated contribution for this calendar year (an ended
                 # salary counts its partial year, not the full annual amount).
                 # Earned income additionally stops at the retirement date even
                 # without an explicit end_date.
                 end_override = None
-                if src.income_type.value in ("salary", "bonus", "side_hustle"):
+                if ends_with_work(src, retirement_date):
                     end_override = retirement_date
                 annual = _prorated_annual_for_year(src, current_year, end_override, retirement_date)
                 if annual <= 0:
@@ -980,7 +982,7 @@ class TaxEngine:
         deferred_balance = accounts.tax_deferred_balance
         current = window_start
 
-        from app.engines.fire_projections import source_window
+        from app.engines.fire_projections import ends_with_work, source_window
 
         while current < window_end and deferred_balance > 0:
             age = self._compute_age(config, current)
@@ -997,8 +999,8 @@ class TaxEngine:
                     continue
                 if src_end and current > src_end:
                     continue
-                if src.income_type.value in ("salary", "bonus", "side_hustle"):
-                    continue  # earned income stops at retirement
+                if ends_with_work(src, retirement_date):
+                    continue  # working-years earned income stops at retirement
                 if src.income_type.value == "social_security":
                     continue  # not yet started
                 baseline_income += src.annual_amount / 100
