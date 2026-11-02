@@ -79,7 +79,8 @@ class FireConfigHistoryEntry(BaseModel):
 class IncomeSourceCreate(BaseModel):
     name: str
     income_type: IncomeType
-    annual_amount: int
+    annual_amount: int  # gross, cents
+    net_annual_amount: int | None = None  # take-home, cents; cash-flow engines use it when set
     frequency: str = "monthly"
     start_date: _dt.date | None = None
     end_date: _dt.date | None = None
@@ -95,6 +96,7 @@ class IncomeSourceUpdate(BaseModel):
     name: str | None = None
     income_type: IncomeType | None = None
     annual_amount: int | None = None
+    net_annual_amount: int | None = None  # explicit null clears it
     frequency: str | None = None
     start_date: _dt.date | None = None
     end_date: _dt.date | None = None
@@ -111,6 +113,7 @@ class IncomeSourceResponse(BaseModel):
     name: str
     income_type: IncomeType
     annual_amount_cents: int
+    net_annual_amount_cents: int | None = None
     frequency: str
     start_date: _dt.date | None = None
     end_date: _dt.date | None = None
@@ -132,6 +135,11 @@ class IncomeSourceResponse(BaseModel):
     def monthly_amount(self) -> float:
         return self.annual_amount_cents / 100 / 12
 
+    @computed_field
+    @property
+    def net_annual_amount(self) -> float | None:
+        return None if self.net_annual_amount_cents is None else self.net_annual_amount_cents / 100
+
     model_config = {"from_attributes": True}
 
     @classmethod
@@ -141,6 +149,7 @@ class IncomeSourceResponse(BaseModel):
             name=src.name,
             income_type=src.income_type,
             annual_amount_cents=src.annual_amount,
+            net_annual_amount_cents=src.net_annual_amount,
             frequency=src.frequency,
             start_date=src.start_date,
             end_date=src.end_date,

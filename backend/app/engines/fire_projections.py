@@ -258,6 +258,40 @@ def retirement_contributions_monthly(ca: dict | None) -> float:
 END_AT_RETIREMENT = "retirement"
 END_AT_PREMIUMS = "premiums"
 
+EARNED_INCOME_TYPES = ("salary", "bonus", "side_hustle")
+
+
+def is_earned(src) -> bool:
+    """Earned income (salary/bonus/side hustle): ends at retirement without an end_date."""
+    return src.income_type.value in EARNED_INCOME_TYPES
+
+
+def net_annual_cents(src) -> int | None:
+    """The take-home net_annual_amount (cents/yr), or None when not entered."""
+    net = getattr(src, "net_annual_amount", None)
+    return net if isinstance(net, (int, float)) and not isinstance(net, bool) else None
+
+
+def cash_annual_cents(src) -> int:
+    """What a source puts in the bank per year (cents): the take-home
+    net_annual_amount when set, else annual_amount. Every cash-flow engine reads
+    this; only the tax engine reads the gross annual_amount."""
+    net = net_annual_cents(src)
+    return src.annual_amount if net is None else net
+
+
+def earned_source_active(src, on: date, retirement_date: date | None) -> bool:
+    """A source's own window, plus: earned income with no end_date stops on the
+    retirement date (dates checked are month steps, so the retirement month
+    itself still pays unless the step lands on/after that day)."""
+    if src.start_date and on < src.start_date:
+        return False
+    if src.end_date and on > src.end_date:
+        return False
+    if is_earned(src) and not src.end_date and retirement_date and on >= retirement_date:
+        return False
+    return True
+
 
 def ends_at_retirement(cf) -> bool:
     """An event flagged to stop when work stops (custom_data.end_at == "retirement")."""
@@ -482,7 +516,7 @@ class FireProjectionsEngine:
             # Only count sources WITHOUT an end_date — they persist through retirement.
             # Sources with end_date (severance, unemployment, temp rental) are temporary.
             continuing_annual = sum(
-                s.annual_amount for s in income_sources
+                cash_annual_cents(s) for s in income_sources
                 if s.income_type.value not in ("salary", "bonus", "side_hustle")
                 and s.end_date is None
             )
@@ -670,18 +704,11 @@ class FireProjectionsEngine:
         """Compute monthly REAL income from sources at a given date (in cents)."""
         total = 0
         for src in sources:
-            # Check if source is active at this date
-            if src.start_date and current_date < src.start_date:
-                continue
-            if src.end_date and current_date > src.end_date:
+            # Its own window; salary/bonus also end at retirement unless explicit end_date
+            if not earned_source_active(src, current_date, retirement_date):
                 continue
 
-            # Salary/bonus end at retirement unless explicit end_date
-            if src.income_type.value in ("salary", "bonus", "side_hustle"):
-                if retirement_date and current_date >= retirement_date and not src.end_date:
-                    continue
-
-            monthly = src.annual_amount / 12
+            monthly = cash_annual_cents(src) / 12
 
             # growth_rate is a NOMINAL raise — deflate to real before compounding
             if src.growth_rate and years_from_start > 0:
@@ -1454,19 +1481,26 @@ class FireProjectionsEngine:
             cashflow_events, today, total_months, skip=_sale_suppresses,
         )
 
-        # Build income source schedule (non-salary, by month offset from today)
+        # Build income source schedule (by month offset from today). Earned income
+        # joins only with a take-home amount (net_annual_amount): without one, the
+        # plan models pay as net cashflow events and the gross would double count.
+        inflation_pct = config.expected_inflation_rate or 0.0
+
         def _source_income_at_month(m: int) -> float:
-            """Monthly non-salary income from active sources at month offset m."""
+            """Monthly income from active sources at month offset m."""
             target = today + relativedelta(months=m)
             total = 0.0
             for src in sources:
-                if src.income_type.value in ("salary", "bonus", "side_hustle"):
+                if is_earned(src) and net_annual_cents(src) is None:
                     continue
-                if src.start_date and target < src.start_date:
+                if not earned_source_active(src, target, retirement_date):
                     continue
-                if src.end_date and target > src.end_date:
-                    continue
-                monthly = src.annual_amount / 12.0 / 100.0  # cents to dollars/mo
+                monthly = cash_annual_cents(src) / 12.0 / 100.0  # cents to dollars/mo
+                # growth_rate is a NOMINAL raise — deflated to real (earned income only,
+                # as in _income_at_month; other sources stay flat here)
+                if is_earned(src) and src.growth_rate and m > 0:
+                    real_growth = (1 + src.growth_rate / 100) / (1 + inflation_pct / 100) - 1
+                    monthly *= (1 + real_growth) ** (m / 12.0)
                 # Apply occupancy haircut to matched rental sources (every rental
                 # source when occupancy_source_match is empty)
                 if (src.income_type.value == "rental"
@@ -1997,13 +2031,11 @@ class FireProjectionsEngine:
         colors = ["#00d4aa", "#06b6d4", "#ffc04d", "#f97316", "#ec4899"]
         ci = 0
         for src in sources:
-            if src.income_type.value in ("salary", "bonus", "side_hustle"):
+            if is_earned(src) and net_annual_cents(src) is None:
+                continue  # pay modeled as net cashflow events (counted below)
+            if not earned_source_active(src, today, None):
                 continue
-            if src.start_date and today < src.start_date:
-                continue
-            if src.end_date and today > src.end_date:
-                continue
-            mo = src.annual_amount / 12.0 / 100.0
+            mo = cash_annual_cents(src) / 12.0 / 100.0
             is_temp = src.end_date is not None
             label = f"{src.name} (temp)" if is_temp else src.name
             streams.append(IncomeStream(label=label, monthly=round(mo, 0), color=colors[ci % len(colors)]))

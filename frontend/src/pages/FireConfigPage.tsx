@@ -5,6 +5,7 @@ import {
   useUpdateFireConfig,
   useIncomeSources,
   useCreateIncomeSource,
+  useUpdateIncomeSource,
   useDeleteIncomeSource,
   useScenarios,
   useCreateScenario,
@@ -12,7 +13,7 @@ import {
   useActivateScenario,
 } from "../api/queries";
 import { formatCurrency } from "../utils/formatting";
-import { inheritanceDateOf, monthFromNow, planMonth, saleMonth } from "../utils/dates";
+import { fmtMonthYear, inheritanceDateOf, monthFromNow, planMonth, saleMonth } from "../utils/dates";
 import type { FireScenario } from "../types/fire";
 
 /** Whole-years age at the end of a "YYYY-MM" month, or undefined without both inputs. */
@@ -31,6 +32,7 @@ export default function FireConfigPage() {
   const updateConfig = useUpdateFireConfig();
   const { data: incomeSources } = useIncomeSources();
   const createIncome = useCreateIncomeSource();
+  const updateIncome = useUpdateIncomeSource();
   const deleteIncome = useDeleteIncomeSource();
 
   const [form, setForm] = useState({
@@ -99,13 +101,18 @@ export default function FireConfigPage() {
     dependent_include_home: true,
   });
 
-  const [incomeForm, setIncomeForm] = useState({
+  const blankIncome = {
     name: "",
     income_type: "salary",
     annual_amount: "",
+    net_annual_amount: "",
+    start_date: "",
     end_date: "",
     growth_rate: "",
-  });
+  };
+  const [incomeForm, setIncomeForm] = useState(blankIncome);
+  // Editing an existing source (id) vs adding a new one (null)
+  const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
 
   const [saveStatus, setSaveStatus] = useState<"idle" | "saved">("idle");
   const [incomeError, setIncomeError] = useState("");
@@ -304,21 +311,44 @@ export default function FireConfigPage() {
       return;
     }
     setIncomeError("");
-    createIncome.mutate({
+    // Blank dates/take-home are sent as null so an edit can clear them
+    const data = {
       name: incomeForm.name,
       income_type: incomeForm.income_type,
       annual_amount: Math.round(parseFloat(incomeForm.annual_amount) * 100),
+      net_annual_amount: incomeForm.net_annual_amount
+        ? Math.round(parseFloat(incomeForm.net_annual_amount) * 100)
+        : null,
       frequency: "monthly",
-      end_date: incomeForm.end_date || undefined,
-      growth_rate: incomeForm.growth_rate ? parseFloat(incomeForm.growth_rate) : undefined,
-    } as any, {
+      start_date: incomeForm.start_date || null,
+      end_date: incomeForm.end_date || null,
+      growth_rate: incomeForm.growth_rate ? parseFloat(incomeForm.growth_rate) : null,
+    };
+    const done = {
       onSuccess: () => {
-        setIncomeForm({ name: "", income_type: "salary", annual_amount: "", end_date: "", growth_rate: "" });
+        setIncomeForm(blankIncome);
+        setEditingIncomeId(null);
         setIncomeError("");
       },
       onError: (err: Error) => {
         setIncomeError(err.message);
       },
+    };
+    if (editingIncomeId) updateIncome.mutate({ id: editingIncomeId, data }, done);
+    else createIncome.mutate(data as any, done);
+  };
+
+  const startEditIncome = (src: NonNullable<typeof incomeSources>[number]) => {
+    setEditingIncomeId(src.id);
+    setIncomeError("");
+    setIncomeForm({
+      name: src.name,
+      income_type: src.income_type,
+      annual_amount: String(src.annual_amount),
+      net_annual_amount: src.net_annual_amount != null ? String(src.net_annual_amount) : "",
+      start_date: src.start_date ?? "",
+      end_date: src.end_date ?? "",
+      growth_rate: src.growth_rate != null ? String(src.growth_rate) : "",
     });
   };
 
@@ -726,24 +756,45 @@ export default function FireConfigPage() {
           {/* Existing sources */}
           {incomeSources && incomeSources.length > 0 && (
             <div className="space-y-2 mb-4">
-              {incomeSources.map((src) => (
-                <div key={src.id} className="flex items-center justify-between py-2 px-3 rounded bg-[var(--bg-secondary)]">
-                  <div>
-                    <span className="text-sm text-[var(--text-primary)]">{src.name}</span>
-                    <span className="ml-2 text-xs text-[var(--text-secondary)]">{src.income_type}</span>
-                    {src.end_date && <span className="ml-2 text-xs text-[var(--text-secondary)]">ends {src.end_date}</span>}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-mono text-[var(--green)]">{formatCurrency(src.annual_amount)}/yr</span>
-                    <button onClick={() => deleteIncome.mutate(src.id)} className="text-xs text-[var(--text-secondary)] hover:text-[var(--red)] transition-colors">&times;</button>
-                  </div>
-                </div>
-              ))}
+              {[...incomeSources]
+                .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""))
+                .map((src) => {
+                  const earned = ["salary", "bonus", "side_hustle"].includes(src.income_type);
+                  const ends = src.end_date
+                    ? fmtMonthYear(src.end_date)
+                    : earned ? "retirement" : "ongoing";
+                  return (
+                    <div key={src.id} className={`flex items-center justify-between py-2 px-3 rounded bg-[var(--bg-secondary)] ${editingIncomeId === src.id ? "ring-1 ring-[var(--blue)]" : ""}`}>
+                      <div>
+                        <span className="text-sm text-[var(--text-primary)]">{src.name}</span>
+                        <span className="ml-2 text-xs text-[var(--text-secondary)]">{src.income_type}</span>
+                        <span className="ml-2 text-xs text-[var(--text-secondary)]">
+                          {src.start_date ? fmtMonthYear(src.start_date) : "now"} &rarr; {ends}
+                        </span>
+                        {!src.is_taxable && <span className="ml-2 text-xs text-[var(--text-secondary)]">non-taxable</span>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-right">
+                          <span className="text-sm font-mono text-[var(--green)]">
+                            {formatCurrency(src.net_annual_amount ?? src.annual_amount)}/yr
+                          </span>
+                          {src.net_annual_amount != null && (
+                            <span className="block text-[10px] text-[var(--text-secondary)]">
+                              take-home &middot; {formatCurrency(src.annual_amount)} gross
+                            </span>
+                          )}
+                        </span>
+                        <button onClick={() => startEditIncome(src)} className="text-xs text-[var(--text-secondary)] hover:text-[var(--blue)] transition-colors">edit</button>
+                        <button onClick={() => deleteIncome.mutate(src.id)} className="text-xs text-[var(--text-secondary)] hover:text-[var(--red)] transition-colors">&times;</button>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           )}
 
           {/* Add new */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 items-end">
             <div>
               <label className={labelCls}>Name</label>
               <input type="text" value={incomeForm.name} onChange={(e) => setIncomeForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g., Salary" className={inputCls} />
@@ -760,17 +811,37 @@ export default function FireConfigPage() {
               </select>
             </div>
             <div>
-              <label className={labelCls}>Annual ($)</label>
+              <label className={labelCls}>Gross / yr ($)</label>
               <input type="number" value={incomeForm.annual_amount} onChange={(e) => setIncomeForm(f => ({ ...f, annual_amount: e.target.value }))} placeholder="0" className={inputCls} />
             </div>
             <div>
-              <label className={labelCls}>End Date</label>
+              <label className={labelCls}>Take-home / yr ($)</label>
+              <input type="number" value={incomeForm.net_annual_amount} onChange={(e) => setIncomeForm(f => ({ ...f, net_annual_amount: e.target.value }))} placeholder="optional" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Starts</label>
+              <input type="date" value={incomeForm.start_date} onChange={(e) => setIncomeForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Ends</label>
               <input type="date" value={incomeForm.end_date} onChange={(e) => setIncomeForm(f => ({ ...f, end_date: e.target.value }))} className={inputCls} />
             </div>
-            <button onClick={handleAddIncome} disabled={createIncome.isPending} className="px-3 py-2 text-xs font-medium bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--blue)] transition-colors disabled:opacity-50">
-              Add
-            </button>
+            <div className="flex gap-2">
+              <button onClick={handleAddIncome} disabled={createIncome.isPending || updateIncome.isPending} className="px-3 py-2 text-xs font-medium bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--blue)] transition-colors disabled:opacity-50">
+                {editingIncomeId ? "Save" : "Add"}
+              </button>
+              {editingIncomeId && (
+                <button onClick={() => { setEditingIncomeId(null); setIncomeForm(blankIncome); setIncomeError(""); }} className="px-2 py-2 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
+          <p className="text-[10px] text-[var(--text-secondary)] mt-2">
+            Every projection honors these dates. Take-home (after tax, withholding and paycheck
+            deductions) is what the cash-flow engines use; the tax engine uses gross. Blank start = now;
+            blank end = ongoing, or your last working month for salary, bonus and side income.
+          </p>
           {incomeError && (
             <p className="text-xs text-[var(--red)] mt-2">{incomeError}</p>
           )}
