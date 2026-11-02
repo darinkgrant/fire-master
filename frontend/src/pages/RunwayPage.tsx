@@ -26,7 +26,7 @@ import { formatCurrency, fmtAxis, fmtCompact } from "../utils/formatting";
 import { TOOLTIP_STYLE } from "../utils/theme";
 import { useEventMarkers } from "../components/charts/EventMarkers";
 import type { EventMarkerGroup } from "../components/charts/EventMarkers";
-import type { CashflowEvent, CashflowEventCreate, EventEndAnchor } from "../types/cashflow";
+import type { BurnWindow, CashflowEvent, CashflowEventCreate, EventEndAnchor } from "../types/cashflow";
 import type { FireConfig } from "../types/fire";
 import { fmtDate, fmtMonthYear, parseLocalDate, todayISO } from "../utils/dates";
 
@@ -513,6 +513,12 @@ function EventsList({
 /* ------------------------------------------------------------------ */
 /*  Main Page                                                          */
 /* ------------------------------------------------------------------ */
+const WINDOW_LABELS: Record<BurnWindow, string> = {
+  "3m": "Last 3 months",
+  ytd: "Year to date",
+  "12m": "Last 12 months",
+};
+
 export default function RunwayPage() {
   const { data: fireConfig } = useFireConfig();
 
@@ -524,6 +530,8 @@ export default function RunwayPage() {
   const [burnOverride, setBurnOverride] = useState<number | undefined>(
     undefined,
   );
+  // Which past period the burn averages over (saved with "Save as default")
+  const [burnWindow, setBurnWindow] = useState<BurnWindow>("3m");
   // Draft text in the input fields — only committed on blur/Enter
   const [incomeDraft, setIncomeDraft] = useState<string>("");
   const [burnDraft, setBurnDraft] = useState<string>("");
@@ -536,6 +544,7 @@ export default function RunwayPage() {
   const savedDefaults = (fireConfig?.custom_assumptions?.runway ?? {}) as {
     monthly_income?: number | null;
     monthly_burn?: number | null;
+    burn_window?: BurnWindow | null;
   };
   const seeded = useRef(false);
   useEffect(() => {
@@ -552,6 +561,8 @@ export default function RunwayPage() {
       setBurnDraft(String(seedBurn));
       setBurnOverride(seedBurn);
     }
+    const seedWindow = (runway as Record<string, unknown>).burn_window as BurnWindow | undefined;
+    if (seedWindow && WINDOW_LABELS[seedWindow]) setBurnWindow(seedWindow);
     seeded.current = true;
   }, [fireConfig]);
 
@@ -571,7 +582,7 @@ export default function RunwayPage() {
   const {
     data: runway,
     isLoading: runwayLoading,
-  } = useRunway(24, incomeOverride, burnOverride);
+  } = useRunway(24, incomeOverride, burnOverride, burnWindow);
   const { data: events, isLoading: eventsLoading } = useCashflowEvents();
   const createEvent = useCreateCashflowEvent();
   const updateConfig = useUpdateFireConfig();
@@ -694,10 +705,13 @@ export default function RunwayPage() {
 
   const zeroDate = runway.cash_zero_date ? fmtDate(runway.cash_zero_date) : null;
   const excludedPerMonth = Math.max(0, (runway.trailing_burn_raw ?? runway.trailing_burn) - runway.trailing_burn);
-  const hasSavedDefaults = savedDefaults.monthly_income != null || savedDefaults.monthly_burn != null;
+  const hasSavedDefaults =
+    savedDefaults.monthly_income != null || savedDefaults.monthly_burn != null || savedDefaults.burn_window != null;
   const savedMatchesCurrent =
     (savedDefaults.monthly_income ?? undefined) === incomeOverride &&
-    (savedDefaults.monthly_burn ?? undefined) === burnOverride;
+    (savedDefaults.monthly_burn ?? undefined) === burnOverride &&
+    (savedDefaults.burn_window ?? "3m") === burnWindow;
+  const windowLabel = WINDOW_LABELS[runway.burn_window ?? burnWindow];
 
   return (
     <Layout>
@@ -754,7 +768,7 @@ export default function RunwayPage() {
             label="Monthly Burn"
             value={formatCurrency(runway.monthly_burn)}
             color="var(--red)"
-            sub={`Trailing: ${formatCurrency(runway.trailing_burn)}`}
+            sub={`${windowLabel}: ${formatCurrency(runway.trailing_burn)}`}
           />
         </div>
 
@@ -793,10 +807,30 @@ export default function RunwayPage() {
                 onChange={(e) => setBurnDraft(e.target.value)}
                 onBlur={commitBurn}
                 onKeyDown={(e) => e.key === "Enter" && commitBurn()}
-                placeholder="Use trailing average"
+                placeholder={`Average, ${windowLabel.toLowerCase()}`}
               />
+              <div className="flex gap-1 mt-1" role="radiogroup" aria-label="Average spending over">
+                {(Object.keys(WINDOW_LABELS) as BurnWindow[]).map((w) => (
+                  <button
+                    key={w}
+                    role="radio"
+                    aria-checked={burnWindow === w}
+                    onClick={() => setBurnWindow(w)}
+                    className={`flex-1 px-1.5 py-1 rounded border text-[10px] leading-tight transition-colors ${
+                      burnWindow === w
+                        ? "border-[var(--blue)] text-[var(--text-primary)] bg-[var(--bg-secondary)]"
+                        : "border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--blue)]"
+                    }`}
+                  >
+                    {WINDOW_LABELS[w]}
+                    {runway.burn_options?.[w] != null && (
+                      <span className="block font-mono">{formatCurrency(runway.burn_options[w]!)}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
               <span className="text-[10px] text-[var(--text-secondary)] mt-0.5 block whitespace-nowrap">
-                Trailing 90d: {formatCurrency(runway.trailing_burn)}/mo
+                {burnOverride != null ? "Your override is in use" : `Using the ${windowLabel.toLowerCase()} average`}
                 {excludedPerMonth > 0 && ` · excl. ${formatCurrency(excludedPerMonth)}/mo planned events`}
               </span>
             </div>
@@ -809,9 +843,13 @@ export default function RunwayPage() {
                     // JSON Merge Patch: null deletes a key (the server merges).
                     custom_assumptions: {
                       runway:
-                        incomeOverride == null && burnOverride == null
+                        incomeOverride == null && burnOverride == null && burnWindow === "3m"
                           ? null
-                          : { monthly_income: incomeOverride ?? null, monthly_burn: burnOverride ?? null },
+                          : {
+                              monthly_income: incomeOverride ?? null,
+                              monthly_burn: burnOverride ?? null,
+                              burn_window: burnWindow === "3m" ? null : burnWindow,
+                            },
                     },
                   } as Partial<FireConfig>)
                 }
@@ -837,6 +875,8 @@ export default function RunwayPage() {
                     {savedDefaults.monthly_income != null && `income ${formatCurrency(savedDefaults.monthly_income)}`}
                     {savedDefaults.monthly_income != null && savedDefaults.monthly_burn != null && " · "}
                     {savedDefaults.monthly_burn != null && `burn ${formatCurrency(savedDefaults.monthly_burn)}`}
+                    {savedDefaults.burn_window != null &&
+                      `${savedDefaults.monthly_income != null || savedDefaults.monthly_burn != null ? " · " : ""}burn averaged ${WINDOW_LABELS[savedDefaults.burn_window].toLowerCase()}`}
                     {" — "}
                     <button
                       className="underline hover:text-[var(--text-primary)]"
@@ -848,7 +888,7 @@ export default function RunwayPage() {
                     </button>
                   </>
                 ) : (
-                  "No saved default — income from your sources, burn from the last 90 days"
+                  "No saved default: income from your sources, burn averaged over the last 3 months"
                 )}
               </span>
             </div>
@@ -856,7 +896,7 @@ export default function RunwayPage() {
           {runway.burn_exclusions && runway.burn_exclusions.length > 0 && (
             <details className="mt-3 text-[11px] text-[var(--text-secondary)]">
               <summary className="cursor-pointer select-none">
-                Left out of the trailing burn: {runway.burn_exclusions.length} payment
+                Left out of the {windowLabel.toLowerCase()} burn: {runway.burn_exclusions.length} payment
                 {runway.burn_exclusions.length > 1 ? "s" : ""} that paid a planned event (raw
                 average {formatCurrency(runway.trailing_burn_raw ?? runway.trailing_burn)}/mo)
               </summary>

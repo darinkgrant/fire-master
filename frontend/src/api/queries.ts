@@ -59,6 +59,7 @@ import type {
   TaxScenarioResponse,
 } from "../types/tax";
 import type {
+  BurnWindow,
   CashFlowPhases,
   CashflowEvent,
   CashflowEventCreate,
@@ -596,14 +597,15 @@ export function useRunway(
   months: number = 24,
   incomeOverride?: number,
   burnOverride?: number,
+  burnWindow: BurnWindow = "3m",
 ) {
-  const params = new URLSearchParams({ months: String(months) });
+  const params = new URLSearchParams({ months: String(months), burn_window: burnWindow });
   if (incomeOverride !== undefined)
     params.set("income_override", String(incomeOverride));
   if (burnOverride !== undefined)
     params.set("burn_override", String(burnOverride));
   return useQuery({
-    queryKey: ["cashflow", "runway", months, incomeOverride, burnOverride],
+    queryKey: ["cashflow", "runway", months, incomeOverride, burnOverride, burnWindow],
     queryFn: () =>
       fetchJSON<RunwayResponse>(`${BASE}/cashflow/runway?${params}`),
   });

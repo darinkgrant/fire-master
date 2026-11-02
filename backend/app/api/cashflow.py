@@ -126,7 +126,11 @@ async def get_runway(
         None, description="Override monthly income baseline (dollars). If omitted, uses trailing 3-month average."
     ),
     burn_override: float | None = Query(
-        None, description="Override monthly expense baseline (dollars). If omitted, uses trailing 3-month average."
+        None, description="Override monthly expense baseline (dollars). If omitted, uses the burn_window average."
+    ),
+    burn_window: str = Query(
+        "3m", pattern="^(3m|ytd|12m)$",
+        description="Averaging window for the burn: last 3 months, year to date, or last 12 months.",
     ),
     _user: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -136,6 +140,7 @@ async def get_runway(
         months=months,
         income_override=income_override,
         burn_override=burn_override,
+        burn_window=burn_window,
     )
 
 

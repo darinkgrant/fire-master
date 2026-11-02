@@ -86,6 +86,10 @@ export interface RunwayResponse {
   /** Trailing 90-day average with nothing excluded (trailing_burn excludes event-matched payments). */
   trailing_burn_raw?: number;
   burn_exclusions?: BurnExclusion[];
+  /** Averaging window behind trailing_burn: last 3 months, year to date, or last 12 months. */
+  burn_window: BurnWindow;
+  /** The cleaned average for each window. */
+  burn_options: Partial<Record<BurnWindow, number>>;
 }
 
 /** GET /api/cashflow/phases — monthly plan cash flow grouped into phases (real $/mo). */
@@ -107,3 +111,5 @@ export interface CashFlowPhases {
   retirement_month: string | null;
   runs_out_age: number | null;
 }
+
+export type BurnWindow = "3m" | "ytd" | "12m";
