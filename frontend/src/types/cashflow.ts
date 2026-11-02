@@ -87,3 +87,23 @@ export interface RunwayResponse {
   trailing_burn_raw?: number;
   burn_exclusions?: BurnExclusion[];
 }
+
+/** GET /api/cashflow/phases — monthly plan cash flow grouped into phases (real $/mo). */
+export interface CashFlowPhase {
+  start: string; // "YYYY-MM"
+  end: string;
+  start_age: number;
+  months: number;
+  changes: string[];
+  income: number;
+  expenses: number;
+  net: number;
+  lines: { label: string; monthly: number }[]; // income +, costs −
+}
+
+export interface CashFlowPhases {
+  phases: CashFlowPhase[];
+  one_offs: { month: string; label: string; amount: number }[];
+  retirement_month: string | null;
+  runs_out_age: number | null;
+}

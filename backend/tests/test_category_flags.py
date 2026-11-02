@@ -20,6 +20,7 @@ from app.ingestion.category_sync import classify_flags
     ("Investments", "Other", (False, True)),             # no usable parent: name-set fallback
     ("Buy", None, (False, True)),                         # no parent at all: name-set fallback
     ("Credit Card Payment", "Other", (False, True)),     # name fallback
+    ("Investment", "Financial", (False, True)),          # Monarch's brokerage buy outside Investments
     ("Paychecks", None, (True, False)),
 ])
 def test_classify_flags(name, parent, expected):

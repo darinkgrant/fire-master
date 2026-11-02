@@ -84,6 +84,10 @@ class IncomeSourceCreate(BaseModel):
     frequency: str = "monthly"
     start_date: _dt.date | None = None
     end_date: _dt.date | None = None
+    # Follow the plan's retirement date (stored as custom_data.start_at / end_at =
+    # "retirement"); start_date / end_date stay as the fallback.
+    starts_at_retirement: bool = False
+    ends_at_retirement: bool = False
     growth_rate: float | None = None
     is_taxable: bool = True
     tax_treatment: str | None = None
@@ -100,6 +104,8 @@ class IncomeSourceUpdate(BaseModel):
     frequency: str | None = None
     start_date: _dt.date | None = None
     end_date: _dt.date | None = None
+    starts_at_retirement: bool | None = None
+    ends_at_retirement: bool | None = None
     growth_rate: float | None = None
     is_taxable: bool | None = None
     tax_treatment: str | None = None
@@ -134,6 +140,16 @@ class IncomeSourceResponse(BaseModel):
     @property
     def monthly_amount(self) -> float:
         return self.annual_amount_cents / 100 / 12
+
+    @computed_field
+    @property
+    def starts_at_retirement(self) -> bool:
+        return isinstance(self.custom_data, dict) and self.custom_data.get("start_at") == "retirement"
+
+    @computed_field
+    @property
+    def ends_at_retirement(self) -> bool:
+        return isinstance(self.custom_data, dict) and self.custom_data.get("end_at") == "retirement"
 
     @computed_field
     @property
@@ -261,6 +277,9 @@ class WealthPoolPoint(BaseModel):
     cash_interest: float = 0  # monthly interest earned
     month: int | None = None  # month offset from start
     event: str | None = None  # event marker label
+    # With project_wealth_pools(capture_lines=True) only: this month's cash flows by
+    # line — {label: signed $} (income +, expense −), incl. "Spending" = −expenses.
+    lines: dict[str, float] | None = None
 
 
 class WealthPoolProjection(BaseModel):
@@ -514,6 +533,13 @@ class IncomeGapResponse(BaseModel):
     own_gap: float | None  # after-tax $/yr needed so the owner's plan lasts; 0 = none needed; None = not reachable
     own_lump_sum: float | None = None  # or: one-time extra savings at retirement that closes it
     own_cushion: float | None = None  # when own_gap == 0: how much more could be spent per year
+    # When no post-retirement income fixes it (own_gap None): the first month the plan
+    # runs short, the owner's age then, whether that is before the extra income would
+    # start, and the one-time sum that would have to arrive by that month.
+    shortfall_month: str | None = None
+    shortfall_age: float | None = None
+    shortfall_before_start: bool | None = None
+    lump_by_shortfall: float | None = None
     dependent_name: str | None = None
     # Largest dependent-trust shortfall across owner-death checkpoints at this
     # spending — a lump sum, i.e. extra life insurance payable to the trust.

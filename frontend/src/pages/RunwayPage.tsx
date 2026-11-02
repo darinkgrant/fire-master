@@ -12,6 +12,7 @@ import {
   Bar,
 } from "recharts";
 import Layout from "../components/Layout";
+import CashFlowPhases from "../components/CashFlowPhases";
 import {
   useRunway,
   useCashflowEvents,
@@ -1040,6 +1041,9 @@ export default function RunwayPage() {
             onDelete={(id) => deleteEvent.mutate(id)}
           />
         </div>
+
+        {/* The plan's cash flow over time, phase by phase */}
+        <CashFlowPhases />
 
         {/* Monthly Projection Table */}
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4">

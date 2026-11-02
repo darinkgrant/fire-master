@@ -34,6 +34,9 @@ export interface IncomeSource {
   net_annual_amount_cents: number | null;
   /** Take-home per year; every cash-flow engine uses it when set. */
   net_annual_amount: number | null;
+  /** Start / end follow the plan's retirement date (start_date / end_date are fallbacks). */
+  starts_at_retirement: boolean;
+  ends_at_retirement: boolean;
   frequency: string;
   start_date: string | null;
   end_date: string | null;
@@ -325,6 +328,12 @@ export interface IncomeGap {
   own_gap: number | null;
   own_lump_sum: number | null;
   own_cushion: number | null;
+  /** When own_gap is null: first month the plan runs short ("YYYY-MM"), age then,
+   * whether that is before income_starts, and the one-time sum needed by then. */
+  shortfall_month: string | null;
+  shortfall_age: number | null;
+  shortfall_before_start: boolean | null;
+  lump_by_shortfall: number | null;
   dependent_name: string | null;
   dependent_insurance_gap: number | null;
   dependent_gap_age: number | null;

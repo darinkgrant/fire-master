@@ -108,6 +108,8 @@ export default function FireConfigPage() {
     net_annual_amount: "",
     start_date: "",
     end_date: "",
+    starts_at_retirement: false,
+    ends_at_retirement: false,
     growth_rate: "",
   };
   const [incomeForm, setIncomeForm] = useState(blankIncome);
@@ -322,6 +324,8 @@ export default function FireConfigPage() {
       frequency: "monthly",
       start_date: incomeForm.start_date || null,
       end_date: incomeForm.end_date || null,
+      starts_at_retirement: incomeForm.starts_at_retirement,
+      ends_at_retirement: incomeForm.ends_at_retirement,
       growth_rate: incomeForm.growth_rate ? parseFloat(incomeForm.growth_rate) : null,
     };
     const done = {
@@ -348,6 +352,8 @@ export default function FireConfigPage() {
       net_annual_amount: src.net_annual_amount != null ? String(src.net_annual_amount) : "",
       start_date: src.start_date ?? "",
       end_date: src.end_date ?? "",
+      starts_at_retirement: src.starts_at_retirement,
+      ends_at_retirement: src.ends_at_retirement,
       growth_rate: src.growth_rate != null ? String(src.growth_rate) : "",
     });
   };
@@ -760,16 +766,21 @@ export default function FireConfigPage() {
                 .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""))
                 .map((src) => {
                   const earned = ["salary", "bonus", "side_hustle"].includes(src.income_type);
-                  const ends = src.end_date
-                    ? fmtMonthYear(src.end_date)
-                    : earned ? "retirement" : "ongoing";
+                  const ends = src.ends_at_retirement
+                    ? "retirement"
+                    : src.end_date
+                      ? fmtMonthYear(src.end_date)
+                      : earned ? "retirement" : "ongoing";
+                  const starts = src.starts_at_retirement
+                    ? "retirement"
+                    : src.start_date ? fmtMonthYear(src.start_date) : "now";
                   return (
                     <div key={src.id} className={`flex items-center justify-between py-2 px-3 rounded bg-[var(--bg-secondary)] ${editingIncomeId === src.id ? "ring-1 ring-[var(--blue)]" : ""}`}>
                       <div>
                         <span className="text-sm text-[var(--text-primary)]">{src.name}</span>
                         <span className="ml-2 text-xs text-[var(--text-secondary)]">{src.income_type}</span>
                         <span className="ml-2 text-xs text-[var(--text-secondary)]">
-                          {src.start_date ? fmtMonthYear(src.start_date) : "now"} &rarr; {ends}
+                          {starts} &rarr; {ends}
                         </span>
                         {!src.is_taxable && <span className="ml-2 text-xs text-[var(--text-secondary)]">non-taxable</span>}
                       </div>
@@ -820,11 +831,19 @@ export default function FireConfigPage() {
             </div>
             <div>
               <label className={labelCls}>Starts</label>
-              <input type="date" value={incomeForm.start_date} onChange={(e) => setIncomeForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} />
+              <input type="date" value={incomeForm.start_date} disabled={incomeForm.starts_at_retirement} onChange={(e) => setIncomeForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} />
+              <label className="flex items-center gap-1 mt-1 text-[10px] text-[var(--text-secondary)]">
+                <input type="checkbox" checked={incomeForm.starts_at_retirement} onChange={(e) => setIncomeForm(f => ({ ...f, starts_at_retirement: e.target.checked }))} />
+                At retirement
+              </label>
             </div>
             <div>
               <label className={labelCls}>Ends</label>
-              <input type="date" value={incomeForm.end_date} onChange={(e) => setIncomeForm(f => ({ ...f, end_date: e.target.value }))} className={inputCls} />
+              <input type="date" value={incomeForm.end_date} disabled={incomeForm.ends_at_retirement} onChange={(e) => setIncomeForm(f => ({ ...f, end_date: e.target.value }))} className={inputCls} />
+              <label className="flex items-center gap-1 mt-1 text-[10px] text-[var(--text-secondary)]">
+                <input type="checkbox" checked={incomeForm.ends_at_retirement} onChange={(e) => setIncomeForm(f => ({ ...f, ends_at_retirement: e.target.checked }))} />
+                At retirement
+              </label>
             </div>
             <div className="flex gap-2">
               <button onClick={handleAddIncome} disabled={createIncome.isPending || updateIncome.isPending} className="px-3 py-2 text-xs font-medium bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--blue)] transition-colors disabled:opacity-50">
@@ -838,9 +857,10 @@ export default function FireConfigPage() {
             </div>
           </div>
           <p className="text-[10px] text-[var(--text-secondary)] mt-2">
-            Every projection honors these dates. Take-home (after tax, withholding and paycheck
-            deductions) is what the cash-flow engines use; the tax engine uses gross. Blank start = now;
-            blank end = ongoing, or your last working month for salary, bonus and side income.
+            Every projection honors these dates. &ldquo;At retirement&rdquo; follows Settings &rarr; Last Working
+            Month (or the active scenario&rsquo;s), so it moves when retirement does. Take-home (after tax,
+            withholding and paycheck deductions) is what the cash-flow engines use; the tax engine uses gross.
+            Blank start = now; blank end = ongoing, or retirement for salary, bonus and side income.
           </p>
           {incomeError && (
             <p className="text-xs text-[var(--red)] mt-2">{incomeError}</p>

@@ -32,7 +32,34 @@ export default function IncomeGapCard({ spendingOverrideCents }: { spendingOverr
         <div>
           <div className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] mb-1">Your plan</div>
           {own == null ? (
-            <div style={{ color: "var(--red)" }}>Not reachable with extra income alone: lower spending.</div>
+            <div>
+              {gap.shortfall_month ? (
+                <>
+                  <span className="font-mono font-semibold" style={{ color: "var(--red)" }}>
+                    Runs short in {fmtMonthYear(gap.shortfall_month)}
+                  </span>
+                  <span className="text-xs text-[var(--text-secondary)]">
+                    {gap.shortfall_age != null && ` at ${Math.floor(gap.shortfall_age)}`}
+                    {gap.shortfall_before_start && ", before you retire"}
+                  </span>
+                  <div className="text-xs text-[var(--text-secondary)] mt-1">
+                    {gap.lump_by_shortfall != null ? (
+                      <>
+                        Needs <span className="font-mono text-[var(--text-primary)]">{fmtCompact(gap.lump_by_shortfall)}</span> more
+                        by then to last for life
+                      </>
+                    ) : (
+                      "No one-time sum by then closes it: lower spending"
+                    )}
+                    {gap.shortfall_before_start
+                      ? `. Income after ${starts} comes too late to help.`
+                      : "."}
+                  </div>
+                </>
+              ) : (
+                <span style={{ color: "var(--red)" }}>Not reachable with extra income alone: lower spending.</span>
+              )}
+            </div>
           ) : ok ? (
             <div>
               <span className="font-mono font-semibold" style={{ color: "var(--green)" }}>No extra income needed</span>
