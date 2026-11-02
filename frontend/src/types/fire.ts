@@ -28,8 +28,12 @@ export interface IncomeSource {
   name: string;
   income_type: string;
   annual_amount_cents: number;
+  /** Gross per year — what the tax engine reads. */
   annual_amount: number;
   monthly_amount: number;
+  net_annual_amount_cents: number | null;
+  /** Take-home per year; every cash-flow engine uses it when set. */
+  net_annual_amount: number | null;
   frequency: string;
   start_date: string | null;
   end_date: string | null;

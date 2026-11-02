@@ -19,7 +19,13 @@ class IncomeSource(Base):
     income_type: Mapped[IncomeType] = mapped_column(
         Enum(IncomeType, name="income_type"), nullable=False
     )
-    annual_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    annual_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)  # GROSS, cents
+    # Take-home (cents/yr) after tax, withholding and paycheck deductions. When set,
+    # every cash-flow engine uses it instead of annual_amount (the tax engine keeps
+    # the gross), and an earned-income source (salary/bonus/side_hustle) joins the
+    # pool engine — which skips earned sources without it, since those plans model
+    # pay as net cashflow events.
+    net_annual_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     frequency: Mapped[str] = mapped_column(String, nullable=False, default="monthly")
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)

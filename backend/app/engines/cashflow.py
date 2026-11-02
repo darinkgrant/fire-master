@@ -127,17 +127,14 @@ class CashflowEngine:
         permanent income (the Jul 27 launch blocker). Extract a shared helper
         post-launch with the agreement test already in place to prove it inert.
         """
+        from app.engines.fire_projections import cash_annual_cents, earned_source_active
+
         total = 0
         for src in sources:
-            if src.start_date and current_date < src.start_date:
+            # Its own window; salary/bonus also end at retirement unless explicit end_date
+            if not earned_source_active(src, current_date, retirement_date):
                 continue
-            if src.end_date and current_date > src.end_date:
-                continue
-            # Salary/bonus end at retirement unless explicit end_date
-            if src.income_type.value in ("salary", "bonus", "side_hustle"):
-                if retirement_date and current_date >= retirement_date and not src.end_date:
-                    continue
-            monthly = src.annual_amount / 12
+            monthly = cash_annual_cents(src) / 12
             # growth_rate is a NOMINAL raise — deflate to real before compounding
             if src.growth_rate and years_from_start > 0:
                 real_growth = (1 + src.growth_rate / 100) / (1 + inflation_pct / 100) - 1
@@ -291,6 +288,9 @@ class CashflowEngine:
         month0_fraction = remaining_days / days_in_month
 
         plan_sales, re_appreciation, scenario_name = await self._get_plan_sales()
+        # Salary ends at the ACTIVE plan's retirement date (scenario-aware), the
+        # same one every other engine uses; the base-config date is the fallback.
+        retirement_date = self._plan_retirement_date or retirement_date
         by_month, labels_by_month = build_cashflow_schedule(
             apply_retirement_end(events, self._plan_retirement_date, self._plan_premium_end)
             + self._plan_inheritance_events,
