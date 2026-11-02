@@ -137,3 +137,30 @@ async def get_runway(
         income_override=income_override,
         burn_override=burn_override,
     )
+
+
+@router.get("/phases")
+async def get_cash_flow_phases(
+    spending_override: int | None = None,
+    _user: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The active plan's monthly cash flow grouped into phases (today → life
+    expectancy): income, expenses and net per month in each stretch, with line
+    items, plus one-time flows. Same engine and real dollars as the Retirement page."""
+    from app.engines.cashflow_phases import cash_flow_phases
+    from app.engines.fire_projections import FireProjectionsEngine
+
+    engine = FireProjectionsEngine(db)
+    config = await engine.get_effective_config()
+    end_age = config.life_expectancy
+    proj = await engine.project_wealth_pools(
+        end_age=end_age, bridge_months=12 * 100, spending_override_cents=spending_override,
+        capture_lines=True,
+    )
+    retire = engine._get_retirement_date(config)
+    out = cash_flow_phases(proj.points)
+    out["retirement_month"] = retire.strftime("%Y-%m") if retire else None
+    last = proj.points[-1] if proj.points else None
+    out["runs_out_age"] = round(last.age, 1) if last and last.age < end_age - 1 else None
+    return out

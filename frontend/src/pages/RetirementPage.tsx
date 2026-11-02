@@ -35,30 +35,11 @@ import { fmtMonthYear } from "../utils/dates";
 import DependentPlanSection from "../components/DependentPlanSection";
 import IncomeGapCard from "../components/IncomeGapCard";
 import PlanSummary from "../components/PlanSummary";
+import { loadBudget, saveBudget } from "../utils/budget";
 
 /** The wealth projection's horizon: useWealthProjection uses the API default end_age. */
 const WEALTH_END_AGE = 82;
 
-/** The what-if monthly budget, remembered in this browser across reloads and logins. */
-const BUDGET_KEY = "firemaster.retirement.budgetMonthly";
-
-function loadBudget(): number | null {
-  try {
-    const v = parseFloat(localStorage.getItem(BUDGET_KEY) ?? "");
-    return isNaN(v) ? null : v;
-  } catch {
-    return null;
-  }
-}
-
-function saveBudget(v: number | null) {
-  try {
-    if (v == null) localStorage.removeItem(BUDGET_KEY);
-    else localStorage.setItem(BUDGET_KEY, String(v));
-  } catch {
-    /* storage blocked: the value just won't survive a reload */
-  }
-}
 
 function StatCard({
   label,
@@ -1219,59 +1200,18 @@ export default function RetirementPage() {
 
         {/* Bridge Status — Two Column */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Monthly Cash Flow */}
-          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4">
-            <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-3">Monthly Cash Flow</h3>
-            {bridge ? (
-              <div className="space-y-2.5">
-                {bridge.income_streams.map((s) => (
-                  <div key={s.label} className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: s.color }} />
-                      <span className="text-[11px] text-[var(--text-secondary)]">{s.label}</span>
-                    </div>
-                    <span className="text-[11px] font-mono" style={{ color: s.color }}>
-                      +${s.monthly.toLocaleString()}
-                    </span>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between pt-1.5 border-t border-[var(--border)]">
-                  <span className="text-[11px] font-medium text-[var(--text-primary)]">Income</span>
-                  <span className="text-[11px] font-mono text-[var(--green)]">
-                    +${(bridge.monthly_income_total + bridge.monthly_ira_total).toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-[var(--text-primary)]">Expenses</span>
-                  <span className="text-[11px] font-mono text-[var(--red)]">
-                    -${bridge.monthly_burn.toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pt-1.5 border-t border-[var(--border)]">
-                  <span className="text-[11px] font-bold text-[var(--text-primary)]">
-                    Monthly gap
-                    {bridge.income_streams.some((st) => st.label.endsWith("(temp)")) && (
-                      <span className="font-normal text-[var(--text-secondary)]"> (excl. temp income)</span>
-                    )}
-                  </span>
-                  <span className="text-[11px] font-mono font-bold" style={{ color: bridge.monthly_deficit > 0 ? "var(--red)" : "var(--green)" }}>
-                    {bridge.monthly_deficit > 0 ? "-" : "+"}${Math.abs(bridge.monthly_deficit).toLocaleString()}
-                  </span>
-                </div>
-                <div className="mt-2 pt-2 border-t border-[var(--border)]">
-                  <span className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)]">After primary property sale</span>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-[11px] text-[var(--text-secondary)]">Gap drops to</span>
-                    <span className="text-[11px] font-mono font-bold" style={{ color: bridge.post_sale_deficit > 0 ? "var(--yellow)" : "var(--green)" }}>
-                      {bridge.post_sale_deficit > 0 ? "-" : "+"}${Math.abs(bridge.post_sale_deficit).toLocaleString()}/mo
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-[var(--text-secondary)]">Loading...</div>
-            )}
-          </div>
+          {/* Cash flow over time lives on the Runway page (phase by phase); the old
+              card here showed only today's streams and misread dated income as temp. */}
+          <Link
+            to="/runway"
+            className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4 hover:border-[var(--blue)] transition-colors"
+          >
+            <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-2">Cash flow by phase</h3>
+            <p className="text-[11px] text-[var(--text-secondary)]">
+              Income, expenses and net per month for each stretch of the plan, from today through
+              retirement, the inheritance and Social Security, on the Runway page &rarr;
+            </p>
+          </Link>
 
           {/* Upcoming Events */}
           <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4">

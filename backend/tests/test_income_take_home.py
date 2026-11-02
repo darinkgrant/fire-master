@@ -68,3 +68,29 @@ def test_runway_and_lifetime_use_take_home_and_dates():
     ]:
         assert CashflowEngine.modeled_income_for_month(sources, on, RETIRE) == expected
         assert fp._income_at_month(sources, on, RETIRE, 0.0) == expected
+
+
+def test_start_and_end_can_follow_retirement():
+    from app.engines.fire_projections import source_window
+    pension = _src(100, income_type=IncomeType.OTHER)
+    pension.custom_data = {"start_at": "retirement"}
+    assert source_window(pension, RETIRE) == (date(2032, 9, 1), None)
+    assert not earned_source_active(pension, date(2032, 8, 2), RETIRE)
+    assert earned_source_active(pension, date(2032, 9, 2), RETIRE)
+    assert not earned_source_active(pension, date(2040, 1, 1), None)  # no retirement date: not started
+
+    consult = _src(100, income_type=IncomeType.OTHER, start=date(2027, 1, 1))
+    consult.custom_data = {"end_at": "retirement"}
+    assert earned_source_active(consult, date(2032, 8, 2), RETIRE)
+    assert not earned_source_active(consult, date(2032, 9, 2), RETIRE)
+    later = date(2035, 6, 30)  # moving retirement moves the end
+    assert earned_source_active(consult, date(2035, 6, 2), later)
+
+
+def test_tax_engine_prorates_anchored_windows():
+    from app.engines.tax_engine import _prorated_annual_for_year
+    pension = _src(120_000_00, income_type=IncomeType.OTHER)
+    pension.custom_data = {"start_at": "retirement"}
+    assert _prorated_annual_for_year(pension, 2031, retirement_date=RETIRE) == 0
+    assert 39_000 < _prorated_annual_for_year(pension, 2032, retirement_date=RETIRE) < 41_000  # Sep–Dec
+    assert _prorated_annual_for_year(pension, 2032) == 0  # retirement unknown: not started

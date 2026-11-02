@@ -173,6 +173,17 @@ async def restore_config_history(
 # --- Income Sources ---
 
 
+def _with_anchors(custom_data: dict | None, anchors: dict[str, bool | None]) -> dict | None:
+    """custom_data with start_at / end_at set to "retirement" (True) or removed (False/None)."""
+    cd = dict(custom_data or {})
+    for key, on in anchors.items():
+        if on:
+            cd[key] = "retirement"
+        else:
+            cd.pop(key, None)
+    return cd or None
+
+
 @router.get("/income", response_model=list[IncomeSourceResponse])
 async def list_income_sources(
     _user: str = Depends(get_current_user),
@@ -191,7 +202,10 @@ async def create_income_source(
     _user: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    source = IncomeSource(**data.model_dump())
+    fields = data.model_dump()
+    anchors = {"start_at": fields.pop("starts_at_retirement"), "end_at": fields.pop("ends_at_retirement")}
+    source = IncomeSource(**fields)
+    source.custom_data = _with_anchors(source.custom_data, anchors)
     db.add(source)
     await db.commit()
     return IncomeSourceResponse.from_model(source)
@@ -208,8 +222,16 @@ async def update_income_source(
     if not source:
         raise HTTPException(status_code=404, detail="Income source not found")
     update_data = data.model_dump(exclude_unset=True)
+    anchors = {
+        key: update_data.pop(flag)
+        for key, flag in (("start_at", "starts_at_retirement"), ("end_at", "ends_at_retirement"))
+        if flag in update_data
+    }
     for field, value in update_data.items():
         setattr(source, field, value)
+    if anchors:
+        # reassigned dict → SQLAlchemy sees the JSONB change
+        source.custom_data = _with_anchors(source.custom_data, anchors)
     await db.commit()
     return IncomeSourceResponse.from_model(source)
 
@@ -357,6 +379,18 @@ def _plan_survives(proj, end_age: float) -> bool:
     return bool(pts) and pts[-1].age >= end_age - 1 and all(
         p.cash >= -1 and p.total >= 0 for p in pts
     )
+
+
+def _first_shortfall(proj, end_age: float):
+    """The first point where _plan_survives fails (cash or total negative), or the
+    last point when the projection stops short of end_age; None when it survives."""
+    pts = proj.points
+    for p in pts:
+        if p.cash < -1 or p.total < 0:
+            return p
+    if pts and pts[-1].age < end_age - 1:
+        return pts[-1]
+    return None
 
 
 async def _dependent_rows(engine, config, dep, spending_cents, extra_events=None):
@@ -507,6 +541,29 @@ async def get_income_gap(
         async def lump_ok(amount: int) -> bool:
             return await own_ok(amount, lump=True)
         lump = await _bisect_dollars(lump_ok, hi=10_000_000, step=5_000)
+    # Extra income after retiring can't fix a hole that opens before it starts.
+    # Then report when the plan first runs short and the one-time amount that
+    # would have to arrive by that month.
+    shortfall_month = shortfall_age = lump_by_shortfall = None
+    shortfall_before_start = None
+    if own_gap is None:
+        base = await engine.project_wealth_pools(end_age=end_age, spending_override_cents=spending_cents)
+        hit = _first_shortfall(base, end_age)
+        if hit is not None:
+            hit_date = date.fromisoformat(hit.date).replace(day=1)
+            shortfall_month, shortfall_age = hit.date[:7], round(hit.age, 1)
+            shortfall_before_start = hit_date < start
+            due = max(hit_date, today.replace(day=1))
+
+            async def by_shortfall_ok(amount: int) -> bool:
+                proj = await engine.project_wealth_pools(
+                    end_age=end_age, spending_override_cents=spending_cents,
+                    extra_events=_post_retirement_income(amount, due, lump=True),
+                )
+                return _plan_survives(proj, end_age)
+            found = await _bisect_dollars(by_shortfall_ok, hi=10_000_000, step=5_000)
+            lump_by_shortfall = None if found is None else float(found)
+
     cushion = None
     if own_gap == 0:
         # headroom: the most extra spending the plan absorbs with no extra income
@@ -532,6 +589,10 @@ async def get_income_gap(
         own_gap=None if own_gap is None else float(own_gap),
         own_lump_sum=None if lump is None else float(lump),
         own_cushion=cushion,
+        shortfall_month=shortfall_month,
+        shortfall_age=shortfall_age,
+        shortfall_before_start=shortfall_before_start,
+        lump_by_shortfall=lump_by_shortfall,
         dependent_name=dep.get("name") if dep else None,
         dependent_insurance_gap=dep_gap,
         dependent_gap_age=dep_age,

@@ -136,7 +136,16 @@ export default function PlanSummary({
           {!gap ? (
             "…"
           ) : gap.own_gap == null ? (
-            <>Not reachable<Pill tone="bad">lower spending</Pill></>
+            gap.shortfall_month ? (
+              <>
+                Short {fmtMonthYear(gap.shortfall_month)}
+                <Pill tone="bad">
+                  {gap.lump_by_shortfall != null ? `${fmtCompact(gap.lump_by_shortfall)} by then` : "lower spending"}
+                </Pill>
+              </>
+            ) : (
+              <>Not reachable<Pill tone="bad">lower spending</Pill></>
+            )
           ) : gap.own_gap === 0 ? (
             <>None<Pill tone="ok">{gap.own_cushion != null ? `+${fmtCompact(gap.own_cushion)}/yr spare` : "funded"}</Pill></>
           ) : (

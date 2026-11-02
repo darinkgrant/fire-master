@@ -126,19 +126,26 @@ def _year_fraction(year: int, start: date | None = None, end: date | None = None
     return ((e - s).days + 1) / ((year_end - year_start).days + 1)
 
 
-def _prorated_annual_for_year(source, year: int, end_override: date | None = None) -> float:
+def _prorated_annual_for_year(
+    source, year: int, end_override: date | None = None, retirement_date: date | None = None,
+) -> float:
     """A source's dollar contribution to one calendar year, day-prorated.
 
     A salary that ended March 24 contributed ~3 months of income this year —
     not its full annual amount (the old behavior, which overstated headline
     income), and not zero (which would understate it). Sources without
     start/end dates count in full. `end_override` caps the window further
-    (e.g. earned income stops at the retirement date).
+    (e.g. earned income stops at the retirement date). Start/end anchored to
+    retirement resolve against `retirement_date` (source_window).
     """
-    end = source.end_date
+    from app.engines.fire_projections import source_window
+
+    start, end = source_window(source, retirement_date)
+    if start == date.max:
+        return 0.0
     if end_override is not None and (end is None or end_override < end):
         end = end_override
-    return (source.annual_amount / 100) * _year_fraction(year, source.start_date, end)
+    return (source.annual_amount / 100) * _year_fraction(year, start, end)
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +728,7 @@ class TaxEngine:
                 end_override = None
                 if src.income_type.value in ("salary", "bonus", "side_hustle"):
                     end_override = retirement_date
-                annual = _prorated_annual_for_year(src, current_year, end_override)
+                annual = _prorated_annual_for_year(src, current_year, end_override, retirement_date)
                 if annual <= 0:
                     continue
                 if src.growth_rate and yr > 0:
@@ -973,6 +980,8 @@ class TaxEngine:
         deferred_balance = accounts.tax_deferred_balance
         current = window_start
 
+        from app.engines.fire_projections import source_window
+
         while current < window_end and deferred_balance > 0:
             age = self._compute_age(config, current)
 
@@ -983,9 +992,10 @@ class TaxEngine:
             for src in income_sources:
                 if not src.is_taxable:
                     continue
-                if src.start_date and current < src.start_date:
+                src_start, src_end = source_window(src, retirement_date)
+                if src_start and current < src_start:
                     continue
-                if src.end_date and current > src.end_date:
+                if src_end and current > src_end:
                     continue
                 if src.income_type.value in ("salary", "bonus", "side_hustle"):
                     continue  # earned income stops at retirement
@@ -1074,6 +1084,7 @@ class TaxEngine:
         std_deduction = self._get_standard_deduction(tax_config)
         brackets = self._get_brackets(tax_config)
         household_size = tax_config.get("household_size", 1)
+        retirement_date = self._get_retirement_date(config)
 
         # Current CALENDAR-YEAR income, day-prorated by each source's active
         # window — an ended salary contributes its partial-year amount, not
@@ -1084,11 +1095,11 @@ class TaxEngine:
         # non-taxable (or net-of-tax) source is cash flow, not taxable
         # income (fire-master#4).
         total_income = sum(
-            _prorated_annual_for_year(s, current_year)
+            _prorated_annual_for_year(s, current_year, retirement_date=retirement_date)
             for s in income_sources if s.is_active and s.is_taxable
         )
         earned_income = sum(
-            _prorated_annual_for_year(s, current_year)
+            _prorated_annual_for_year(s, current_year, retirement_date=retirement_date)
             for s in income_sources
             if s.income_type.value in ("salary", "bonus", "side_hustle")
             and s.is_active and s.is_taxable

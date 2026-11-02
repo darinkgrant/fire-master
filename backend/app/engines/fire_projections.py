@@ -280,15 +280,35 @@ def cash_annual_cents(src) -> int:
     return src.annual_amount if net is None else net
 
 
+def source_anchor(src, key: str) -> str | None:
+    """custom_data.start_at / end_at on an income source ("retirement" or None)."""
+    cd = getattr(src, "custom_data", None)
+    return cd.get(key) if isinstance(cd, dict) else None
+
+
+def source_window(src, retirement_date: date | None) -> tuple[date | None, date | None]:
+    """(start, end) of an income source with plan anchors resolved: start_at
+    "retirement" → the day after the retirement date (date.max while no
+    retirement date is known — it hasn't started); end_at "retirement" → the
+    retirement date. Otherwise the stored start_date / end_date."""
+    start, end = src.start_date, src.end_date
+    if source_anchor(src, "start_at") == END_AT_RETIREMENT:
+        start = retirement_date + timedelta(days=1) if retirement_date else date.max
+    if source_anchor(src, "end_at") == END_AT_RETIREMENT and retirement_date:
+        end = retirement_date
+    return start, end
+
+
 def earned_source_active(src, on: date, retirement_date: date | None) -> bool:
-    """A source's own window, plus: earned income with no end_date stops on the
-    retirement date (dates checked are month steps, so the retirement month
-    itself still pays unless the step lands on/after that day)."""
-    if src.start_date and on < src.start_date:
+    """A source's own window (plan anchors resolved), plus: earned income with no
+    end stops on the retirement date (dates checked are month steps, so the
+    retirement month itself still pays unless the step lands on/after that day)."""
+    start, end = source_window(src, retirement_date)
+    if start and on < start:
         return False
-    if src.end_date and on > src.end_date:
+    if end and on > end:
         return False
-    if is_earned(src) and not src.end_date and retirement_date and on >= retirement_date:
+    if is_earned(src) and not end and retirement_date and on >= retirement_date:
         return False
     return True
 
@@ -334,6 +354,18 @@ def apply_retirement_end(
                 category=cf.category, custom_data=cf.custom_data,
             )
         out.append(cf)
+    return out
+
+
+def _finish_lines(lines: dict[str, float], income: float, expenses: float) -> dict[str, float]:
+    """A month's captured lines, rounded, plus what the engine added outside them
+    (sale proceeds, a sold property's lost rent, legacy adjustments) as one line and
+    spending as a negative line — so the lines always sum to income − expenses."""
+    out = {k: round(v, 2) for k, v in lines.items() if abs(v) >= 0.005}
+    other = income - sum(lines.values())
+    if abs(other) >= 0.5:
+        out["Property sales and other adjustments"] = round(other, 2)
+    out["Spending"] = -round(expenses, 2)
     return out
 
 
@@ -1198,11 +1230,14 @@ class FireProjectionsEngine:
         scenario_id: uuid_mod.UUID | None = None,
         spending_override_cents: int | None = None,
         extra_events: list | None = None,
+        capture_lines: bool = False,
     ) -> WealthPoolProjection:
         """Pool-aware wealth projection: cash, IRA-A (SEPP), IRA-B (growth).
 
         `extra_events`: transient CashflowEvent rows added to the plan's own for this
         run only (what-if probes such as the post-retirement income gap).
+        `capture_lines`: record each point's cash flows by line (WealthPoolPoint.lines)
+        — the cash-flow-by-phase view; numbers are unchanged either way.
 
         Pulls all assumptions from the DB (FIRE config, income sources, accounts).
 
@@ -1486,8 +1521,8 @@ class FireProjectionsEngine:
         # plan models pay as net cashflow events and the gross would double count.
         inflation_pct = config.expected_inflation_rate or 0.0
 
-        def _source_income_at_month(m: int) -> float:
-            """Monthly income from active sources at month offset m."""
+        def _source_income_at_month(m: int, lines: dict | None = None) -> float:
+            """Monthly income from active sources at month offset m (by source into `lines`)."""
             target = today + relativedelta(months=m)
             total = 0.0
             for src in sources:
@@ -1510,6 +1545,8 @@ class FireProjectionsEngine:
                                     for t in occupancy_source_match))):
                     monthly *= rental_occupancy_rate
                 total += monthly
+                if lines is not None:
+                    lines[src.name] = lines.get(src.name, 0.0) + monthly
             return total
 
         points: list[WealthPoolPoint] = []
@@ -1522,11 +1559,14 @@ class FireProjectionsEngine:
             dt = today + relativedelta(months=m)
 
             # --- Income (non-IRA) ---
-            income = _source_income_at_month(m)
+            lines: dict[str, float] | None = {} if capture_lines else None
+            income = _source_income_at_month(m, lines)
 
             # Social Security
             if m >= ss_start_month:
                 income += ss_amount
+                if lines is not None:
+                    lines["Social Security"] = ss_amount
 
             # RRSP/RRIF drawdown — tracked as visible pool, not lumped into income
             rrsp_draw = 0.0
@@ -1540,6 +1580,8 @@ class FireProjectionsEngine:
             if m in cf_by_month:
                 for label, amount in cf_by_month[m]:
                     income += amount
+                    if lines is not None:
+                        lines[label] = lines.get(label, 0.0) + amount
                     # Drop secondary-property RE equity when its (non-suppressed) sale
                     # event fires — matched via projection.sell_event_label_match.
                     # When the generic path owns the property, its event was
@@ -1897,6 +1939,7 @@ class FireProjectionsEngine:
                     cash_interest=round(cash_interest, 0),
                     month=m,
                     event=event_label,
+                    lines=_finish_lines(lines, income, expenses) if lines is not None else None,
                 ))
 
             if cash <= 0 and ira_b <= 0 and ira_a <= 0 and taxable <= 0 and roth <= 0:

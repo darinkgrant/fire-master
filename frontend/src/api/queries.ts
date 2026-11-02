@@ -59,6 +59,7 @@ import type {
   TaxScenarioResponse,
 } from "../types/tax";
 import type {
+  CashFlowPhases,
   CashflowEvent,
   CashflowEventCreate,
   RunwayResponse,
@@ -580,6 +581,16 @@ export function useRunTaxScenario() {
   });
 }
 
+// Cash flow by phase (the plan engine's monthly flows, grouped)
+export function useCashFlowPhases(spendingOverride?: number) {
+  const qs = spendingOverride != null ? `?spending_override=${spendingOverride}` : "";
+  return useQuery({
+    // under "fire": income-source and plan edits invalidate it
+    queryKey: ["fire", "cash-flow-phases", spendingOverride ?? "default"],
+    queryFn: () => fetchJSON<CashFlowPhases>(`${BASE}/cashflow/phases${qs}`),
+  });
+}
+
 // Cash Flow & Runway
 export function useRunway(
   months: number = 24,
@@ -612,6 +623,7 @@ export function useCreateCashflowEvent() {
       postJSON<CashflowEvent>(`${BASE}/cashflow/events`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["fire"] }); // events drive every projection
     },
   });
 }
@@ -623,6 +635,7 @@ export function useUpdateCashflowEvent() {
       putJSON<CashflowEvent>(`${BASE}/cashflow/events/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["fire"] }); // events drive every projection
     },
   });
 }
@@ -634,6 +647,7 @@ export function useDeleteCashflowEvent() {
       fetchJSON(`${BASE}/cashflow/events/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["fire"] }); // events drive every projection
     },
   });
 }

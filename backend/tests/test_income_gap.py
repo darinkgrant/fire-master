@@ -42,3 +42,15 @@ def test_lump_is_one_time():
 
 def test_zero_income_adds_nothing():
     assert _post_retirement_income(0, date(2032, 9, 1)) == []
+
+
+def test_first_shortfall_finds_the_first_negative_point():
+    from types import SimpleNamespace as P
+
+    from app.api.fire import _first_shortfall
+    ok = [P(age=50, cash=10, total=100, date="2030-01-01"), P(age=60, cash=5, total=50, date="2040-01-01")]
+    assert _first_shortfall(P(points=ok), 61) is None
+    dip = [ok[0], P(age=55, cash=-500, total=40, date="2035-03-01"), ok[1]]
+    assert _first_shortfall(P(points=dip), 61).date == "2035-03-01"
+    stops = [ok[0], P(age=70, cash=0, total=0, date="2050-01-01")]
+    assert _first_shortfall(P(points=stops), 90).age == 70  # projection ended early
