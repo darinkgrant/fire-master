@@ -94,3 +94,26 @@ def test_tax_engine_prorates_anchored_windows():
     assert _prorated_annual_for_year(pension, 2031, retirement_date=RETIRE) == 0
     assert 39_000 < _prorated_annual_for_year(pension, 2032, retirement_date=RETIRE) < 41_000  # Sep–Dec
     assert _prorated_annual_for_year(pension, 2032) == 0  # retirement unknown: not started
+
+
+def test_pay_that_starts_at_retirement_is_not_cut_off_by_it():
+    from app.engines.fire_projections import in_pool_engine
+    side = _src(60_000_00, 60_000_00)
+    side.custom_data = {"start_at": "retirement"}
+    assert earned_source_active(side, date(2033, 1, 2), RETIRE)
+    assert earned_source_active(side, date(2050, 1, 2), RETIRE)  # no end: keeps paying
+    gross_only = _src(100_000_00, end=date(2037, 8, 15))
+    gross_only.custom_data = {"start_at": "retirement"}
+    assert in_pool_engine(gross_only, RETIRE)  # no events to double count after retirement
+    assert not in_pool_engine(_src(100_000_00), RETIRE)  # working-years pay still needs take-home
+    assert earned_source_active(gross_only, date(2037, 8, 2), RETIRE)
+    assert not earned_source_active(gross_only, date(2037, 9, 2), RETIRE)
+
+
+def test_tax_engine_counts_post_retirement_pay():
+    from app.engines.fire_projections import ends_with_work
+    from app.engines.tax_engine import _prorated_annual_for_year
+    side = _src(60_000_00)
+    side.custom_data = {"start_at": "retirement"}
+    assert not ends_with_work(side, RETIRE)
+    assert _prorated_annual_for_year(side, 2034, None, RETIRE) == 60_000

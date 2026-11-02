@@ -299,18 +299,42 @@ def source_window(src, retirement_date: date | None) -> tuple[date | None, date 
     return start, end
 
 
+def starts_after_retirement(src, retirement_date: date | None) -> bool:
+    """A source whose window opens after the retirement date (e.g. part-time work
+    in retirement) — pay that work-year events can't already cover."""
+    start, _ = source_window(src, retirement_date)
+    return retirement_date is not None and start is not None and start > retirement_date
+
+
+def ends_with_work(src, retirement_date: date | None) -> bool:
+    """Earned income from the working years with no end of its own: it stops on
+    the retirement date. Earned income that starts after retirement doesn't."""
+    _, end = source_window(src, retirement_date)
+    return is_earned(src) and not end and not starts_after_retirement(src, retirement_date)
+
+
 def earned_source_active(src, on: date, retirement_date: date | None) -> bool:
-    """A source's own window (plan anchors resolved), plus: earned income with no
-    end stops on the retirement date (dates checked are month steps, so the
-    retirement month itself still pays unless the step lands on/after that day)."""
+    """A source's own window (plan anchors resolved), plus: working-years earned
+    income with no end stops on the retirement date (dates checked are month
+    steps, so the retirement month itself still pays unless the step lands
+    on/after that day)."""
     start, end = source_window(src, retirement_date)
     if start and on < start:
         return False
     if end and on > end:
         return False
-    if is_earned(src) and not end and retirement_date and on >= retirement_date:
+    if ends_with_work(src, retirement_date) and retirement_date and on >= retirement_date:
         return False
     return True
+
+
+def in_pool_engine(src, retirement_date: date | None) -> bool:
+    """Whether project_wealth_pools counts a source. Earned income needs a take-home
+    amount — unless it starts after retirement: working-years pay may already be
+    modeled as net cashflow events (its gross would double count), post-retirement
+    pay can't be (counted at gross until a take-home is entered)."""
+    return (not is_earned(src) or net_annual_cents(src) is not None
+            or starts_after_retirement(src, retirement_date))
 
 
 def ends_at_retirement(cf) -> bool:
@@ -1526,7 +1550,7 @@ class FireProjectionsEngine:
             target = today + relativedelta(months=m)
             total = 0.0
             for src in sources:
-                if is_earned(src) and net_annual_cents(src) is None:
+                if not in_pool_engine(src, retirement_date):
                     continue
                 if not earned_source_active(src, target, retirement_date):
                     continue

@@ -110,6 +110,7 @@ export default function FireConfigPage() {
     end_date: "",
     starts_at_retirement: false,
     ends_at_retirement: false,
+    is_taxable: true,
     growth_rate: "",
   };
   const [incomeForm, setIncomeForm] = useState(blankIncome);
@@ -326,6 +327,7 @@ export default function FireConfigPage() {
       end_date: incomeForm.end_date || null,
       starts_at_retirement: incomeForm.starts_at_retirement,
       ends_at_retirement: incomeForm.ends_at_retirement,
+      is_taxable: incomeForm.is_taxable,
       growth_rate: incomeForm.growth_rate ? parseFloat(incomeForm.growth_rate) : null,
     };
     const done = {
@@ -354,6 +356,7 @@ export default function FireConfigPage() {
       end_date: src.end_date ?? "",
       starts_at_retirement: src.starts_at_retirement,
       ends_at_retirement: src.ends_at_retirement,
+      is_taxable: src.is_taxable,
       growth_rate: src.growth_rate != null ? String(src.growth_rate) : "",
     });
   };
@@ -770,7 +773,8 @@ export default function FireConfigPage() {
                     ? "retirement"
                     : src.end_date
                       ? fmtMonthYear(src.end_date)
-                      : earned ? "retirement" : "ongoing";
+                      // only working-years pay stops at retirement by default
+                      : earned && !src.starts_at_retirement ? "retirement" : "ongoing";
                   const starts = src.starts_at_retirement
                     ? "retirement"
                     : src.start_date ? fmtMonthYear(src.start_date) : "now";
@@ -789,9 +793,13 @@ export default function FireConfigPage() {
                           <span className="text-sm font-mono text-[var(--green)]">
                             {formatCurrency(src.net_annual_amount ?? src.annual_amount)}/yr
                           </span>
-                          {src.net_annual_amount != null && (
+                          {src.net_annual_amount != null ? (
                             <span className="block text-[10px] text-[var(--text-secondary)]">
                               take-home &middot; {formatCurrency(src.annual_amount)} gross
+                            </span>
+                          ) : earned && (
+                            <span className="block text-[10px] text-[var(--yellow)]">
+                              gross &middot; add take-home for accuracy
                             </span>
                           )}
                         </span>
@@ -805,7 +813,7 @@ export default function FireConfigPage() {
           )}
 
           {/* Add new */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-3 items-end">
             <div>
               <label className={labelCls}>Name</label>
               <input type="text" value={incomeForm.name} onChange={(e) => setIncomeForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g., Salary" className={inputCls} />
@@ -845,6 +853,10 @@ export default function FireConfigPage() {
                 At retirement
               </label>
             </div>
+            <label className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] pb-2">
+              <input type="checkbox" checked={incomeForm.is_taxable} onChange={(e) => setIncomeForm(f => ({ ...f, is_taxable: e.target.checked }))} />
+              Taxable
+            </label>
             <div className="flex gap-2">
               <button onClick={handleAddIncome} disabled={createIncome.isPending || updateIncome.isPending} className="px-3 py-2 text-xs font-medium bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--blue)] transition-colors disabled:opacity-50">
                 {editingIncomeId ? "Save" : "Add"}
@@ -860,7 +872,10 @@ export default function FireConfigPage() {
             Every projection honors these dates. &ldquo;At retirement&rdquo; follows Settings &rarr; Last Working
             Month (or the active scenario&rsquo;s), so it moves when retirement does. Take-home (after tax,
             withholding and paycheck deductions) is what the cash-flow engines use; the tax engine uses gross.
-            Blank start = now; blank end = ongoing, or retirement for salary, bonus and side income.
+            Blank start = now; blank end = ongoing, or retirement for salary, bonus and side income
+            that starts before you retire. Untick Taxable for money that is not income for tax (IHSS
+            Medicaid-waiver pay, gifts): it still pays the bills, but adds nothing to taxable income.
+            Salary without a take-home amount counts at gross after retirement and is skipped before it.
           </p>
           {incomeError && (
             <p className="text-xs text-[var(--red)] mt-2">{incomeError}</p>
