@@ -122,9 +122,11 @@ class RunwayResponse(BaseModel):
     cash_zero_date: _dt.date | None
     income_provenance: str = "modeled"  # "override" | "modeled" — where monthly_income came from
     modeled_income: float = 0  # this month's income-sources figure, reported even when an override replaces it
-    trailing_burn: float  # trailing 90-day average, event-matched payments excluded (the default burn)
+    trailing_burn: float  # trailing average over burn_window, event-matched payments excluded (the default burn)
     trailing_burn_raw: float = 0  # the same average with nothing excluded
     burn_exclusions: list[BurnExclusion] = []
+    burn_window: str = "3m"  # "3m" (last 90 days) | "ytd" (since Jan 1) | "12m" (last 365 days)
+    burn_options: dict[str, float] = {}  # the cleaned average for each window, for the selector
     trailing_income: float  # observed trailing average — REFERENCE ONLY, never a projection input
     projection: list[MonthlyProjectionPoint]
     scenario_name: str | None = None  # active scenario whose pinned property sales are applied

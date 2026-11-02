@@ -356,3 +356,28 @@ class TestBurnBaselineExcludesModeledEvents:
         r = await _engine(db).project_runway(months=3, today=date(2026, 9, 22))
         assert r.trailing_burn == r.trailing_burn_raw == pytest.approx(907.0, abs=0.01)
         assert r.burn_exclusions == []
+
+
+class TestBurnWindows:
+    def test_window_spans(self):
+        from app.engines.cashflow import burn_window_span
+        today = date(2026, 11, 2)
+        assert burn_window_span("3m", today) == (date(2026, 8, 4), 3.0)
+        assert burn_window_span("12m", today) == (date(2025, 11, 2), 12.0)
+        start, months = burn_window_span("ytd", today)
+        assert start == date(2026, 1, 1) and 10.0 < months < 10.1
+
+    @pytest.mark.asyncio
+    async def test_each_window_averages_its_own_spending(self):
+        outflows = [
+            _outflow(9_000_00, date(2025, 8, 1), "Last summer"),   # 12m only
+            _outflow(6_000_00, date(2026, 2, 1), "Winter trip"),   # ytd + 12m
+            _outflow(3_000_00, date(2026, 6, 1), "Recent"),        # all three
+        ]
+        db = _mock_db_for_runway(cash_cents=0, trailing_income_cents=0, sources=[], events=[], outflows=outflows)
+        r = await _engine(db).project_runway(months=1, today=date(2026, 6, 21), burn_window="12m")
+        assert r.burn_window == "12m"
+        assert r.burn_options["3m"] == pytest.approx(1_000)
+        assert r.burn_options["12m"] == pytest.approx(1_500)
+        assert r.burn_options["ytd"] == pytest.approx(9_000 / (171 / (365.25 / 12)), abs=0.01)
+        assert r.trailing_burn == pytest.approx(1_500)

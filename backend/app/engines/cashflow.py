@@ -31,6 +31,18 @@ logger = logging.getLogger(__name__)
 
 # Trailing window for the burn baseline (the income reference uses the same span).
 TRAILING_DAYS = 90
+# Runway burn windows: trailing 3 months (default), year to date, trailing 12 months.
+BURN_WINDOWS = ("3m", "ytd", "12m")
+
+
+def burn_window_span(window: str, today: date) -> tuple[date, float]:
+    """(start date, length in months) of a burn window ending today."""
+    if window == "12m":
+        return today - timedelta(days=365), 12.0
+    if window == "ytd":
+        start = date(today.year, 1, 1)
+        return start, max(1, (today - start).days) / (365.25 / 12)
+    return today - timedelta(days=TRAILING_DAYS), TRAILING_DAYS / 30
 
 
 def _cents_to_dollars(cents: int) -> float:
@@ -209,6 +221,7 @@ class CashflowEngine:
         income_override: float | None = None,
         burn_override: float | None = None,
         today: date | None = None,
+        burn_window: str = "3m",
     ) -> RunwayResponse:
         """Project monthly cash balance forward.
 
@@ -224,6 +237,10 @@ class CashflowEngine:
         lumps from discrete dated sources, so it must be modeled. The average
         EXCLUDES payments matched to cashflow events (engines/event_matching.py):
         a finished special assessment is not an ongoing cost.
+
+        `burn_window` picks the averaging window: "3m" (last 90 days), "ytd"
+        (since Jan 1) or "12m" (last 365 days); all three are reported in
+        burn_options so the page can show each.
 
         Overrides (user-declared flat baselines) win over both when provided.
 
@@ -250,9 +267,12 @@ class CashflowEngine:
         from app.engines.plan_months import resolve_month_offset
 
         today = today or date.today()
+        if burn_window not in BURN_WINDOWS:
+            burn_window = "3m"
         current_cash = await self.get_current_cash()
-        burn_start = today - timedelta(days=TRAILING_DAYS)
-        outflows = await self._outflows(burn_start, today)
+        spans = {w: burn_window_span(w, today) for w in BURN_WINDOWS}
+        # One query over the widest window; each window filters it by date.
+        all_outflows = await self._outflows(min(start for start, _ in spans.values()), today)
         trailing_income = await self.get_trailing_monthly_income(months=3, today=today)
         sources, retirement_date, inflation = await self._get_income_model_inputs()
 
@@ -261,15 +281,20 @@ class CashflowEngine:
         # Trailing burn, CLEANED: a payment that paid a cashflow event (a special
         # assessment installment, a one-off bill) is the event, already modeled —
         # left in the average it would be projected forward as if it recurred.
-        burn_matches = match_occurrences(
-            expense_occurrences(events, burn_start - timedelta(days=DATE_WINDOW_DAYS), today),
-            outflows,
-        )
-        months_in_window = TRAILING_DAYS / 30
-        raw_cents = sum(c.amount_cents for c in outflows)
-        matched_cents = sum(m.txn.amount_cents for m in burn_matches)
-        trailing_burn_raw = _cents_to_dollars(raw_cents) / months_in_window
-        trailing_burn = _cents_to_dollars(raw_cents - matched_cents) / months_in_window
+        burn_options: dict[str, float] = {}
+        for window, (start, months_in_window) in spans.items():
+            outflows = [c for c in all_outflows if c.date >= start]
+            matches = match_occurrences(
+                expense_occurrences(events, start - timedelta(days=DATE_WINDOW_DAYS), today),
+                outflows,
+            )
+            raw_cents = sum(c.amount_cents for c in outflows)
+            matched_cents = sum(m.txn.amount_cents for m in matches)
+            burn_options[window] = round(_cents_to_dollars(raw_cents - matched_cents) / months_in_window, 2)
+            if window == burn_window:
+                burn_matches = matches
+                trailing_burn_raw = _cents_to_dollars(raw_cents) / months_in_window
+                trailing_burn = _cents_to_dollars(raw_cents - matched_cents) / months_in_window
         burn_exclusions = [
             BurnExclusion(
                 event_name=m.event_name,
@@ -412,6 +437,8 @@ class CashflowEngine:
             trailing_burn=round(trailing_burn, 2),
             trailing_burn_raw=round(trailing_burn_raw, 2),
             burn_exclusions=burn_exclusions,
+            burn_window=burn_window,
+            burn_options=burn_options,
             trailing_income=round(trailing_income, 2),
             projection=projection,
             scenario_name=scenario_name,
